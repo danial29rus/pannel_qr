@@ -204,6 +204,8 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
     expiry_minutes = project.payment_expiry_minutes
     project_rate = project.default_platform_fee_percent
     request_payload = payload.model_dump(mode="json")
+    if not payload.description:
+        payload = payload.model_copy(update={"description": f"Покупка в магазине {project.name}"})
     try:
         transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
         response = MerchantQrPaymentResponse(
