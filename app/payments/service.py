@@ -298,6 +298,7 @@ class PaymentService:
             updated_at=transaction.updated_at, provider_code=provider_code,
             provider_name=provider_name, order_id=order_id, order_reference=order_reference,
             external_order_id=external_order_id,
+            merchant_transaction_id=transaction.extra.get("merchant_transaction_id"),
         )
 
     @staticmethod
@@ -332,6 +333,7 @@ class PaymentService:
             order_id=order.id if order else None,
             order_reference=order.reference if order else None,
             external_order_id=order.external_order_id if order else None,
+            merchant_transaction_id=transaction.extra.get("merchant_transaction_id"),
         )
         events = await TransactionEventDAO.list_by_transaction(session, transaction.id)
         provider_attempts = await ProviderRequestAttemptDAO.list_by_transaction(session, transaction.id)

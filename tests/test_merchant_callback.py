@@ -67,3 +67,89 @@ async def test_paid_callback_matches_merchant_contract(monkeypatch):
     }
     assert transaction.merchant_callback_status == "succeeded"
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_merchant_422_is_logged_but_not_retried_forever(monkeypatch):
+    transaction_id = uuid4()
+    transaction = SimpleNamespace(
+        id=transaction_id,
+        project_id=uuid4(),
+        state=TransactionState.succeeded,
+        amount=Decimal("20"),
+        settled_amount=None,
+        currency="RUB",
+        merchant_callback_status=None,
+        extra={"merchant_transaction_id": "unknown-order", "merchant_webhook_url": "https://merchant.example/webhook"},
+    )
+    session = SimpleNamespace(commit=AsyncMock())
+    attempt = AsyncMock()
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                status_code=422, content=b'{"message":"Transaction not found"}',
+                headers={"content-type": "application/json"}, text="",
+                json=lambda: {"message": "Transaction not found"},
+            )
+
+    monkeypatch.setattr(external_platform.TransactionDAO, "get", AsyncMock(return_value=transaction))
+    monkeypatch.setattr(external_platform.ProjectDAO, "get", AsyncMock(return_value=SimpleNamespace(external_callback_url=None)))
+    monkeypatch.setattr(external_platform.ProviderRequestAttemptDAO, "next_attempt_number", AsyncMock(return_value=1))
+    monkeypatch.setattr(external_platform.ProviderRequestAttemptDAO, "append", attempt)
+    monkeypatch.setattr(external_platform.httpx, "AsyncClient", Client)
+
+    assert not await ExternalPlatformService.deliver_merchant_status_for_transaction(session, transaction_id)
+    assert attempt.await_args.args[1].outcome == "error"
+    assert transaction.merchant_callback_status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_retryable_merchant_error_stops_after_five_attempts(monkeypatch):
+    transaction_id = uuid4()
+    transaction = SimpleNamespace(
+        id=transaction_id,
+        project_id=uuid4(),
+        state=TransactionState.succeeded,
+        amount=Decimal("20"),
+        settled_amount=None,
+        currency="RUB",
+        merchant_callback_status=None,
+        extra={"merchant_transaction_id": "temporary-error", "merchant_webhook_url": "https://merchant.example/webhook"},
+    )
+    session = SimpleNamespace(commit=AsyncMock())
+    append_attempt = AsyncMock()
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            return SimpleNamespace(status_code=503, content=b"", headers={}, text="temporarily unavailable")
+
+    monkeypatch.setattr(external_platform.TransactionDAO, "get", AsyncMock(return_value=transaction))
+    monkeypatch.setattr(external_platform.ProjectDAO, "get", AsyncMock(return_value=SimpleNamespace(external_callback_url=None)))
+    monkeypatch.setattr(external_platform.ProviderRequestAttemptDAO, "next_attempt_number", AsyncMock(return_value=5))
+    monkeypatch.setattr(external_platform.ProviderRequestAttemptDAO, "append", append_attempt)
+    monkeypatch.setattr(external_platform.httpx, "AsyncClient", Client)
+
+    assert not await ExternalPlatformService.deliver_merchant_status_for_transaction(session, transaction_id)
+    record = append_attempt.await_args.args[1]
+    assert record.outcome == "error"
+    assert "retry limit (5) reached" in record.error
+    assert transaction.merchant_callback_status == "succeeded"

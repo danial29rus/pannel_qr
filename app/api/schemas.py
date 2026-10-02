@@ -298,6 +298,7 @@ class TransactionListItem(TransactionRead):
     order_id: uuid.UUID | None = None
     order_reference: str | None = None
     external_order_id: str | None = None
+    merchant_transaction_id: str | None = None
 
 
 class PaymentTraceEntry(BaseModel):

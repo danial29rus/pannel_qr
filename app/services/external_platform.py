@@ -29,6 +29,9 @@ PAYGATE_TERMINAL_STATUSES = {
     TransactionState.cancelled: "cancelled",
     TransactionState.refunded: "refunded",
 }
+# Prevent a broken merchant endpoint from being hit indefinitely. Every
+# delivery is still recorded, including the final capped attempt.
+MAX_MERCHANT_CALLBACK_ATTEMPTS = 5
 
 
 class ExternalPlatformService:
@@ -172,30 +175,45 @@ class ExternalPlatformService:
             except ValueError:
                 response_payload = {"body": response.text[:1000]}
             successful = 200 <= response.status_code < 300
+            # A malformed/unknown merchant transaction (4xx other than a
+            # timeout or rate limit) cannot become valid by retrying every
+            # worker pass. Preserve the error in the trace and stop retries;
+            # transport errors, 429 and 5xx remain retryable.
+            retryable = response.status_code in (408, 425, 429) or response.status_code >= 500
+            will_retry = retryable and attempt < MAX_MERCHANT_CALLBACK_ATTEMPTS
+            error = None if successful else (
+                f"HTTP {response.status_code}" if will_retry
+                else f"HTTP {response.status_code}; retry limit ({MAX_MERCHANT_CALLBACK_ATTEMPTS}) reached" if retryable
+                else f"HTTP {response.status_code}"
+            )
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
                 transaction_id=transaction.id, operation=operation, attempt=attempt,
-                outcome="success" if successful else "retryable_error", request_payload={
+                outcome="success" if successful else "retryable_error" if will_retry else "error", request_payload={
                     "method": "POST",
                     "url": callback_url,
                     "headers": {"Content-Type": "application/json"},
                     "body": payload,
                 },
                 response_payload=response_payload, http_status=response.status_code,
-                error=None if successful else f"HTTP {response.status_code}",
+                error=error,
             ))
-            if successful:
+            if successful or not will_retry:
                 transaction.merchant_callback_status = transaction.state.value
         except httpx.HTTPError as exc:
+            will_retry = attempt < MAX_MERCHANT_CALLBACK_ATTEMPTS
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
                 transaction_id=transaction.id, operation=operation, attempt=attempt,
-                outcome="retryable_error", request_payload={
+                outcome="retryable_error" if will_retry else "error", request_payload={
                     "method": "POST",
                     "url": callback_url,
                     "headers": {"Content-Type": "application/json"},
                     "body": payload,
                 }, response_payload=None,
-                http_status=None, error=str(exc),
+                http_status=None,
+                error=str(exc) if will_retry else f"{exc}; retry limit ({MAX_MERCHANT_CALLBACK_ATTEMPTS}) reached",
             ))
+            if not will_retry:
+                transaction.merchant_callback_status = transaction.state.value
             successful = False
         await session.commit()
         return successful
