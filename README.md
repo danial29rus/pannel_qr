@@ -15,13 +15,13 @@ For a domain, use [the Nginx template](deploy/nginx/panel.conf.example), replace
 
 ## Production deployment
 
-Production uses Caddy, PostgreSQL volumes, a separate worker, and Alembic migrations. Copy `.env.production.example` to `.env.production` on the server, generate long secrets, point both DNS A records to the server, then run:
+Production uses the server's Nginx, PostgreSQL volumes, a separate worker, and Alembic migrations. Copy `.env.production.example` to `.env.production` on the server, generate long secrets, point both DNS A records to the server, then run:
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
 ```
 
-`panel.workkit-studio.ru` serves the dashboard and proxies `/api/*`; `api.workkit-studio.ru` exposes the API/webhook host. Caddy obtains and renews TLS certificates automatically after DNS is live. The migration container runs `alembic upgrade head` before API and worker start. Never use `down`, `rm -v`, or a new volume name on a production update: the `postgres_data` Docker volume contains the audit trail and payment data.
+`panel.workkit-studio.ru` serves the dashboard; `api.workkit-studio.ru` exposes the API/webhook host. Install the two supplied Nginx site templates, then issue their certificates with Certbot. The migration container runs `alembic upgrade head` before API and worker start. Never use `down`, `rm -v`, or a new volume name on a production update: the `postgres_data` Docker volume contains the audit trail and payment data.
 
 Generate a password hash locally without placing the plaintext password in the environment:
 

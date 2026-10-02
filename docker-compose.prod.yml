@@ -46,8 +46,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    expose:
-      - "18080"
+    ports:
+      - "127.0.0.1:${API_BIND_PORT:-18180}:18080"
 
   worker:
     build: .
@@ -65,24 +65,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
-    expose:
-      - "8080"
-
-  caddy:
-    image: caddy:2.8-alpine
-    restart: unless-stopped
-    depends_on:
-      - api
-      - frontend
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - "127.0.0.1:${PANEL_BIND_PORT:-15174}:8080"
 
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
