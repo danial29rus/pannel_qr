@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, MerchantQrPaymentCreate, MerchantQrPaymentResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
-    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionRead, TransactionTrace, UserCreate, UserRead,
+    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionRead, TransactionTrace, UserCreate, UserEmailImport, UserImportResult, UserPage, UserRead, UserUpdate,
 )
 from app.db.session import get_session
 from app.db.models import ActorRole
@@ -36,9 +36,22 @@ async def add_user(payload: UserCreate, session: AsyncSession = Depends(get_sess
     return await CatalogService.create_user(session, payload)
 
 
-@router.get("/users", response_model=list[UserRead], dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator))])
-async def list_users(session: AsyncSession = Depends(get_session)):
-    return await CatalogService.list_users(session)
+@router.get("/users", response_model=UserPage, dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator))])
+async def list_users(
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=50, ge=10, le=200),
+    query: str | None = Query(default=None, min_length=1, max_length=200), session: AsyncSession = Depends(get_session),
+):
+    return await CatalogService.list_users(session, page, page_size, query)
+
+
+@router.post("/users/import", response_model=UserImportResult, dependencies=[Depends(require_roles(ActorRole.admin))])
+async def import_users(payload: UserEmailImport, session: AsyncSession = Depends(get_session)):
+    return await CatalogService.import_user_emails(session, payload)
+
+
+@router.patch("/users/{user_id}", response_model=UserRead, dependencies=[Depends(require_roles(ActorRole.admin))])
+async def update_user(user_id: uuid.UUID, payload: UserUpdate, session: AsyncSession = Depends(get_session)):
+    return await CatalogService.update_user(session, user_id, payload)
 
 
 @router.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(ActorRole.admin))])

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -36,8 +36,42 @@ class UserDAO:
         return list((await session.scalars(select(User).order_by(User.registered_at.desc()))).all())
 
     @staticmethod
+    async def page(session: AsyncSession, page: int, page_size: int, query: str | None = None) -> tuple[list[User], int]:
+        statement = select(User)
+        count_statement = select(func.count()).select_from(User)
+        if query:
+            term = f"%{query.strip()}%"
+            filters = (
+                User.full_name.ilike(term),
+                User.email.ilike(term),
+                User.business_name.ilike(term),
+                User.phone.ilike(term),
+                User.telegram_username.ilike(term),
+            )
+            statement = statement.where(or_(*filters))
+            count_statement = count_statement.where(or_(*filters))
+        total = await session.scalar(count_statement) or 0
+        users = list((await session.scalars(
+            statement.order_by(User.registered_at.desc(), User.id.desc()).offset((page - 1) * page_size).limit(page_size)
+        )).all())
+        return users, total
+
+    @staticmethod
     async def list_by_email_marker(session: AsyncSession, marker: str) -> Sequence[User]:
         return list((await session.scalars(select(User).where(User.email.ilike(f"%{marker}%")))).all())
+
+    @staticmethod
+    async def existing_email_values(session: AsyncSession, emails: Sequence[str]) -> set[str]:
+        if not emails:
+            return set()
+        return set((await session.scalars(
+            select(func.lower(User.email)).where(func.lower(User.email).in_(emails))
+        )).all())
+
+    @staticmethod
+    async def save(session: AsyncSession, user: User) -> User:
+        await session.flush()
+        return user
 
     @staticmethod
     async def random_active_with_email(session: AsyncSession) -> User | None:

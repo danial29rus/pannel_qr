@@ -1,10 +1,11 @@
+import re
 import uuid
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ExternalPlatformConfigUpdate, LimitCreate, ProjectCreate, ProviderCommissionUpdate, ProviderCreate, ProjectCommissionUpdate, UserCreate
+from app.api.schemas import ExternalPlatformConfigUpdate, LimitCreate, ProjectCreate, ProviderCommissionUpdate, ProviderCreate, ProjectCommissionUpdate, UserCreate, UserEmailImport, UserImportResult, UserPage, UserUpdate
 from app.dao.repositories import LimitDAO, OperationalPolicyDAO, ProjectDAO, ProviderDAO, UserDAO
 from app.db.models import Limit, PaymentProvider, Project, ProjectOperationalPolicy, User
 from app.payments.registry import registry
@@ -27,8 +28,51 @@ class CatalogService:
         return user
 
     @staticmethod
-    async def list_users(session: AsyncSession) -> list[User]:
-        return await UserDAO.list(session)
+    async def list_users(session: AsyncSession, page: int, page_size: int, query: str | None = None) -> UserPage:
+        users, total = await UserDAO.page(session, page, page_size, query)
+        return UserPage(items=users, total=total, page=page, page_size=page_size, pages=max(1, (total + page_size - 1) // page_size))
+
+    @classmethod
+    async def update_user(cls, session: AsyncSession, user_id: uuid.UUID, payload: UserUpdate) -> User:
+        user = await UserDAO.get(session, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        for field, value in payload.model_dump().items():
+            setattr(user, field, value)
+        await UserDAO.save(session, user)
+        await cls._commit(session)
+        await session.refresh(user)
+        return user
+
+    @classmethod
+    async def import_user_emails(cls, session: AsyncSession, payload: UserEmailImport) -> UserImportResult:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_email in payload.emails:
+            email = raw_email.strip().lower()
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+                continue
+            if email not in seen:
+                seen.add(email)
+                normalized.append(email)
+        existing = await UserDAO.existing_email_values(session, normalized)
+        users = [
+            User(
+                full_name=f"{payload.full_name_prefix} {payload.start_index + index:06d}",
+                email=email,
+                business_name=payload.business_name,
+            )
+            for index, email in enumerate(normalized)
+            if email not in existing
+        ]
+        if users:
+            await UserDAO.create_many(session, users)
+            await cls._commit(session)
+        return UserImportResult(
+            created=len(users),
+            skipped=len(payload.emails) - len(users),
+            total_received=len(payload.emails),
+        )
 
     @classmethod
     async def create_project(cls, session: AsyncSession, payload: ProjectCreate) -> Project:

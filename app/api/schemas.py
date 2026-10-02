@@ -40,6 +40,31 @@ class UserRead(ORMModel):
     is_active: bool
 
 
+class UserUpdate(UserCreate):
+    is_active: bool = True
+
+
+class UserPage(BaseModel):
+    items: list[UserRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class UserEmailImport(BaseModel):
+    emails: list[str] = Field(min_length=1, max_length=5_000)
+    full_name_prefix: str = Field(default="Покупатель", min_length=1, max_length=180)
+    business_name: str = Field(default="Импортированный покупатель", min_length=1, max_length=255)
+    start_index: int = Field(default=1, ge=1)
+
+
+class UserImportResult(BaseModel):
+    created: int
+    skipped: int
+    total_received: int
+
+
 class ProjectCreate(BaseModel):
     owner_id: uuid.UUID
     name: str = Field(min_length=1, max_length=200)
