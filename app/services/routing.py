@@ -13,10 +13,11 @@ from app.dao.repositories import ProviderDAO, ProviderRouteDAO, ProjectDAO, Tran
 from app.db.models import PaymentProvider, ProjectProviderRoute, TransactionState
 
 COUNTED_STATES = (TransactionState.created, TransactionState.pending, TransactionState.processing, TransactionState.succeeded)
+MOSCOW = ZoneInfo("Europe/Moscow")
 
 
 def start_of_day(now: datetime) -> datetime:
-    return now.astimezone(ZoneInfo("Europe/Moscow")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    return now.astimezone(MOSCOW).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
 
 
 def start_of_week(now: datetime) -> datetime:
@@ -105,7 +106,9 @@ class RoutingService:
         now = datetime.now(UTC)
         daily_amount, daily_count = await TransactionDAO.provider_usage(session, route.project_id, route.provider_id, start_of_day(now), COUNTED_STATES)
         weekly_amount, weekly_count = await TransactionDAO.provider_usage(session, route.project_id, route.provider_id, start_of_week(now), COUNTED_STATES)
-        current_time = now.time().replace(tzinfo=None)
+        # Route schedules are configured and displayed in Moscow time, the
+        # same timezone used for daily and weekly limits.
+        current_time = now.astimezone(MOSCOW).time().replace(tzinfo=None)
         if not route.is_active:
             return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, False, "Маршрут выключен")
         provider = await ProviderDAO.get(session, route.provider_id)

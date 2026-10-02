@@ -1,5 +1,5 @@
 import uuid
-from decimal import Decimal
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import ExternalOrderCreate, OrderCreate, ProductCreate
@@ -52,9 +52,16 @@ class OrderService:
                 "received_amount": str(payload.amount),
                 "product_sku": product.sku,
             })
+        product_id = product.id
+        # The authentication/project, idempotency and product lookups above
+        # use SQLAlchemy's implicit read transaction. `create_order` owns a
+        # short write transaction, so close that read transaction immediately
+        # before it begins. Without this, the first external order fails with
+        # "A transaction is already begun on this Session".
+        await session.rollback()
         return await OrderService.create_order(
             session,
-            OrderCreate(project_id=project_id, user_id=payload.user_id, product_id=product.id, quantity=payload.quantity,
+            OrderCreate(project_id=project_id, user_id=payload.user_id, product_id=product_id, quantity=payload.quantity,
                         website_url=payload.website_url, language=payload.language),
             f"external:{payload.external_order_id}", payload.external_order_id,
         )

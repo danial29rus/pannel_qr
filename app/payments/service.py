@@ -1,6 +1,5 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import httpx
 from fastapi import HTTPException, status
