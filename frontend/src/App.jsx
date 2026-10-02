@@ -77,7 +77,7 @@ function Providers() {
   const { projectId, projects, notice } = usePanel();
   const [providers, setProviders] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ code:"", name:"", adapter_type:"mulenpay", base_url:"https://mulenpay.ru/api", shop_id:"", api_key:"", secret_key:"", callback_token:"", provider_fee_percent:"0" });
+  const [form, setForm] = useState({ code:"", name:"", adapter_type:"mulenpay", base_url:"https://api.mulenpay.com/api/v3", shop_id:"", api_key:"", secret_key:"", callback_token:"", provider_fee_percent:"0" });
   const reload = async () => { try { setProviders(await api("/providers")); } catch (error) { notice(error.message); } };
   useEffect(() => { reload(); }, []);
   const set = key => event => setForm({ ...form, [key]:event.target.value });

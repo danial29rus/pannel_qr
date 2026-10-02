@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,7 +183,17 @@ class PaymentService:
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         callback_payment = await adapter.parse_webhook(body)
         # Callback is only a signal; fetch the authoritative provider state before changing local money status.
-        payment = await adapter.get_payment(callback_payment.external_id)
+        try:
+            payment = await adapter.get_payment(callback_payment.external_id)
+        except httpx.HTTPStatusError as exc:
+            # MulenPay's dashboard test sends a placeholder payment id. There
+            # is no local payment to update in that case, so acknowledge the
+            # delivery instead of returning 500 and making the dashboard show
+            # a false webhook failure. Authentication and other provider
+            # failures must remain visible to the caller.
+            if exc.response.status_code == 404:
+                return
+            raise HTTPException(status_code=502, detail="Could not verify payment with provider") from exc
         callback = None
         async with session.begin():
             transaction = await TransactionDAO.get_by_provider_external_for_update(session, provider.id, payment.external_id)
