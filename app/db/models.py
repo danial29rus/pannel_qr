@@ -204,6 +204,8 @@ class Transaction(Base):
     description: Mapped[str | None] = mapped_column(Text)
     raw_provider_payload: Mapped[dict | None] = mapped_column(JSONB)
     extra: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Used by reconciliation for direct API payments that do not have an Order.
+    last_status_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

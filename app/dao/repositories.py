@@ -227,6 +227,23 @@ class TransactionDAO:
         )).all()
 
     @staticmethod
+    async def list_open_without_order(session: AsyncSession, limit: int = 200) -> list[uuid.UUID]:
+        """Payments made through the direct API, without an Order wrapper."""
+        return list((await session.scalars(
+            select(Transaction.id)
+            .outerjoin(Order, Order.transaction_id == Transaction.id)
+            .where(
+                Order.id.is_(None),
+                Transaction.external_id.is_not(None),
+                Transaction.state.in_((
+                    TransactionState.created, TransactionState.pending, TransactionState.processing,
+                )),
+            )
+            .order_by(Transaction.created_at)
+            .limit(limit)
+        )).all())
+
+    @staticmethod
     async def amount_used(
         session: AsyncSession, project_id: uuid.UUID, direction: TransactionDirection, currency: str,
         since: datetime, counted_states: tuple[TransactionState, ...],

@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dao.repositories import ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, ProjectDAO
+from app.dao.repositories import ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, OrderDAO, ProjectDAO
 from app.db.models import ExternalCallbackAttempt, IntegrationRequestLog, Order, Project
 
 
@@ -82,3 +82,14 @@ class ExternalPlatformService:
             successful = False
         await session.commit()
         return successful
+
+    @staticmethod
+    async def deliver_final_status_for_order(session: AsyncSession, order_id) -> bool:
+        """Load fresh ORM rows after a status-update transaction has committed."""
+        order = await OrderDAO.get(session, order_id)
+        if not order:
+            return False
+        project = await ProjectDAO.get(session, order.project_id)
+        if not project:
+            return False
+        return await ExternalPlatformService.deliver_final_status(session, project, order)

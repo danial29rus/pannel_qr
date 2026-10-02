@@ -17,13 +17,13 @@ class MulenPayAdapter:
         self.api_key = str(config.get("api_key", ""))
         self.secret_key = str(config.get("secret_key", ""))
         self.shop_id = str(config.get("shop_id", ""))
-        self.base_url = str(config.get("base_url", "https://api.mulenpay.com/api/v3")).rstrip("/")
-        # MulenPay's current API gateway is versioned in the base URL and
-        # exposes /payments below it. Older installations used a base URL
-        # without /api/v3 and need the historical /v2/payments path instead.
+        # The documented checkout API is /api/v2/payments.  Store the stable
+        # API root in provider settings, rather than a versioned endpoint, so
+        # both creation and status checks always address the same resource.
+        self.base_url = str(config.get("base_url", "https://api.mulenpay.com/api")).rstrip("/")
         self.payments_url = (
-            f"{self.base_url}/payments"
-            if self.base_url.endswith("/api/v3")
+            self.base_url
+            if self.base_url.endswith("/v2/payments")
             else f"{self.base_url}/v2/payments"
         )
         self.callback_token = str(config.get("callback_token", ""))
@@ -56,7 +56,11 @@ class MulenPayAdapter:
         return ProviderPayment(external_id=str(data["id"]), state=TransactionState.pending, amount=request.amount, currency=request.currency, payload={"payment_url": data.get("paymentUrl"), "provider": data})
 
     async def get_payment(self, external_id: str) -> ProviderPayment:
-        async with httpx.AsyncClient(timeout=15) as client: response = await client.get(f"{self.payments_url}/{external_id}", headers=self._headers())
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(f"{self.payments_url}/{external_id}", headers=self._headers())
+        except httpx.RequestError as exc:
+            raise RetryableProviderError(str(exc)) from exc
         if response.status_code in (408, 429) or response.status_code >= 500: raise RetryableProviderError(response.text, response.status_code)
         response.raise_for_status(); data = response.json()["payment"]
         return ProviderPayment(external_id=str(data["id"]), state=self._state(data["status"]), amount=Decimal(str(data["amount"])), currency=data["currency"].upper(), payload=data)

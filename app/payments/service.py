@@ -140,6 +140,16 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="retryable_error", request_payload={"reference": request.reference}, response_payload=None, http_status=exc.status_code, error=str(exc)))
             if attempt == max_attempts: raise HTTPException(status_code=503, detail="Payment provider unavailable after retries") from exc
             await asyncio.sleep(min(2 ** (attempt - 1), 4))
+        except httpx.HTTPStatusError as exc:
+            # A 4xx is a rejected provider request (credentials, Shop ID or
+            # request schema), not an unhandled panel error.  Preserve it in
+            # the trace and give the operator an actionable API response.
+            await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
+                transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="error",
+                request_payload={"reference": request.reference}, response_payload={"body": exc.response.text[:1000]},
+                http_status=exc.response.status_code, error=f"HTTP {exc.response.status_code}",
+            ))
+            raise HTTPException(status_code=502, detail="Payment provider rejected the create request") from exc
     transaction.external_id = provider_payment.external_id
     transaction.payment_url = (provider_payment.payload or {}).get("payment_url")
     transaction.raw_provider_payload = provider_payment.payload
@@ -178,13 +188,20 @@ class PaymentService:
         provider = await ProviderDAO.get_by_code(session, provider_code)
         if not provider or not provider.is_active:
             raise HTTPException(status_code=404, detail="Provider not found")
+        provider_id = provider.id
         adapter = registry.get(provider.adapter_type, {**provider.settings, **provider.credentials_encrypted})
         if not await adapter.verify_webhook(body, headers):
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         callback_payment = await adapter.parse_webhook(body)
+        # Provider lookup above starts an implicit read transaction.  Do not
+        # keep it open while waiting on a remote HTTP request or before taking
+        # the row lock used below.
+        await session.rollback()
         # Callback is only a signal; fetch the authoritative provider state before changing local money status.
         try:
             payment = await adapter.get_payment(callback_payment.external_id)
+        except RetryableProviderError as exc:
+            raise HTTPException(status_code=503, detail="Payment provider is temporarily unavailable") from exc
         except httpx.HTTPStatusError as exc:
             # MulenPay's dashboard test sends a placeholder payment id. There
             # is no local payment to update in that case, so acknowledge the
@@ -194,14 +211,9 @@ class PaymentService:
             if exc.response.status_code == 404:
                 return
             raise HTTPException(status_code=502, detail="Could not verify payment with provider") from exc
-        # SQLAlchemy starts a transaction for the provider lookup above. End
-        # that read transaction before acquiring the row lock for the status
-        # update; otherwise a real webhook raises "transaction is already
-        # begun" and the provider retries indefinitely.
-        await session.rollback()
-        callback = None
+        callback_order_id = None
         async with session.begin():
-            transaction = await TransactionDAO.get_by_provider_external_for_update(session, provider.id, payment.external_id)
+            transaction = await TransactionDAO.get_by_provider_external_for_update(session, provider_id, payment.external_id)
             if not transaction:
                 raise HTTPException(status_code=404, detail="Transaction not found")
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
@@ -218,9 +230,9 @@ class PaymentService:
             if order and order.external_order_id and transaction.state in (TransactionState.succeeded, TransactionState.failed, TransactionState.cancelled, TransactionState.refunded):
                 project = await ProjectDAO.get(session, transaction.project_id)
                 if project:
-                    callback = (project, order)
-        if callback:
-            await ExternalPlatformService.deliver_final_status(session, *callback)
+                    callback_order_id = order.id
+        if callback_order_id:
+            await ExternalPlatformService.deliver_final_status_for_order(session, callback_order_id)
 
     @staticmethod
     async def events(session: AsyncSession, transaction_id) -> list[TransactionEvent]:
