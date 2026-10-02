@@ -194,6 +194,11 @@ class PaymentService:
             if exc.response.status_code == 404:
                 return
             raise HTTPException(status_code=502, detail="Could not verify payment with provider") from exc
+        # SQLAlchemy starts a transaction for the provider lookup above. End
+        # that read transaction before acquiring the row lock for the status
+        # update; otherwise a real webhook raises "transaction is already
+        # begun" and the provider retries indefinitely.
+        await session.rollback()
         callback = None
         async with session.begin():
             transaction = await TransactionDAO.get_by_provider_external_for_update(session, provider.id, payment.external_id)
