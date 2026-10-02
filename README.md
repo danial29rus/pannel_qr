@@ -35,6 +35,8 @@ Generate production secrets with `sh scripts/generate-secrets.sh`; it prints val
 
 After filling the non-password production values, run `sudo bash scripts/install-production.sh`. It prompts twice for the panel password without putting it into shell history, rotates the signed-session secret, builds the stack, installs the two Nginx hosts, validates Nginx, and asks Certbot for both certificates. DNS must already point at the server.
 
+To rotate only the panel password later, use `sudo bash scripts/reset-panel-password.sh`; it recreates only the API container and never touches PostgreSQL.
+
 Schedule one daily database backup on the server (and copy this directory to off-server storage):
 
 ```bash
