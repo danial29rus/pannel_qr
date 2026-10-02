@@ -33,6 +33,8 @@ Put that value into `PANEL_ADMIN_PASSWORD_HASH`. The panel login issues a time-l
 
 Generate production secrets with `sh scripts/generate-secrets.sh`; it prints values and never overwrites an existing env file.
 
+After filling the non-password production values, run `sudo bash scripts/install-production.sh`. It prompts twice for the panel password without putting it into shell history, rotates the signed-session secret, builds the stack, installs the two Nginx hosts, validates Nginx, and asks Certbot for both certificates. DNS must already point at the server.
+
 Schedule one daily database backup on the server (and copy this directory to off-server storage):
 
 ```bash
