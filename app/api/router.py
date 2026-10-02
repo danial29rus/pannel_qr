@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
-    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
+    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, MerchantQrPaymentCreate, MerchantQrPaymentResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
     OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionRead, TransactionTrace, UserCreate, UserRead,
 )
 from app.db.session import get_session
@@ -176,6 +176,43 @@ async def accept_external_order(project_key: str, payload: ExternalOrderCreate, 
     except HTTPException as exc:
         await ExternalPlatformService.log_request(
             session, project.id, payload.external_order_id, request_payload, outcome="rejected", http_status=exc.status_code,
+            response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
+        )
+        raise
+
+
+@router.post("/transactions/qr", response_model=MerchantQrPaymentResponse, status_code=status.HTTP_201_CREATED)
+async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: Request, session: AsyncSession = Depends(get_session)):
+    """PayGateCore-compatible merchant endpoint: Bearer token, no buyer or product in the body."""
+    authorization = request.headers.get("authorization", "")
+    token = authorization[7:] if authorization.lower().startswith("bearer ") else None
+    project = await ExternalPlatformService.project_for_token(session, token)
+    project_id = project.id
+    expiry_minutes = project.payment_expiry_minutes
+    project_rate = project.default_platform_fee_percent
+    request_payload = payload.model_dump(mode="json")
+    try:
+        transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
+        response = MerchantQrPaymentResponse(
+            id=transaction.id,
+            merchant_transaction_id=payload.merchant_transaction_id,
+            expires_at=transaction.created_at + timedelta(minutes=expiry_minutes),
+            amount=transaction.amount,
+            currency=transaction.currency,
+            currency_rate=payload.currency_rate,
+            amount_in_usd=(transaction.amount / payload.currency_rate) if payload.currency_rate else None,
+            rate=project_rate,
+            commission=transaction.amount * project_rate / 100,
+            payment_url=transaction.payment_url,
+        )
+        await ExternalPlatformService.log_request(
+            session, project_id, payload.merchant_transaction_id, request_payload, outcome="accepted", http_status=201,
+            response_payload=response.model_dump(mode="json"),
+        )
+        return response
+    except HTTPException as exc:
+        await ExternalPlatformService.log_request(
+            session, project_id, payload.merchant_transaction_id, request_payload, outcome="rejected", http_status=exc.status_code,
             response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
         )
         raise

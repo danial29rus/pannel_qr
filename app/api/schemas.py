@@ -375,6 +375,33 @@ class ExternalOrderResponse(BaseModel):
     payment_url: str | None
 
 
+class MerchantQrPaymentCreate(BaseModel):
+    """PayGateCore-compatible QR payment request from a merchant."""
+
+    amount: Decimal = Field(gt=0, max_digits=20, decimal_places=4)
+    currency: str = Field(min_length=3, max_length=8)
+    merchant_transaction_id: str = Field(min_length=1, max_length=128)
+    auto_amount_step: int | None = Field(default=None, ge=1)
+    auto_amount_limit: int | None = Field(default=None, ge=1, le=20)
+    currency_rate: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=8)
+    webhook_url: str | None = Field(default=None, max_length=2048, pattern=r"^https://")
+    return_url: str | None = Field(default=None, max_length=2048, pattern=r"^https?://")
+    description: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class MerchantQrPaymentResponse(BaseModel):
+    id: uuid.UUID
+    merchant_transaction_id: str
+    expires_at: datetime
+    amount: Decimal
+    currency: str
+    currency_rate: Decimal | None
+    amount_in_usd: Decimal | None
+    rate: Decimal
+    commission: Decimal
+    payment_url: str | None
+
+
 class SupportConversationCreate(BaseModel):
     user_id: uuid.UUID
     subject: str = Field(min_length=1, max_length=255)

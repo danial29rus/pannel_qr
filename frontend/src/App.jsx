@@ -14,7 +14,7 @@ function App() {
   useEffect(() => { if (authenticated) reloadProjects(); }, [authenticated]);
   useEffect(() => { if (projectId) localStorage.setItem("active-project", projectId); }, [projectId]);
   if (!authenticated) return <Login onLogin={() => setAuthenticated(true)}/>;
-  return <PanelContext.Provider value={{ projects, projectId, setProjectId, reloadProjects, notice }}><div className="shell"><Sidebar/><main><Header/><Routes><Route path="/" element={<OperationsAnalytics/>}/><Route path="/payments" element={<Payments/>}/><Route path="/limits" element={<Limits/>}/><Route path="/projects" element={<Projects/>}/><Route path="/providers" element={<Providers/>}/><Route path="/analytics" element={<Analytics/>}/><Route path="/support" element={<Support/>}/><Route path="/settings" element={<Settings/>}/><Route path="*" element={<Navigate to="/" replace/>}/></Routes></main><div className={`toast ${toast ? "show" : ""}`}>{toast}</div></div></PanelContext.Provider>;
+  return <PanelContext.Provider value={{ projects, projectId, setProjectId, reloadProjects, notice }}><div className="shell"><Sidebar/><main><Header/><Routes><Route path="/" element={<OperationsDashboard/>}/><Route path="/payments" element={<Payments/>}/><Route path="/limits" element={<Limits/>}/><Route path="/projects" element={<Projects/>}/><Route path="/providers" element={<Providers/>}/><Route path="/analytics" element={<Analytics/>}/><Route path="/support" element={<Support/>}/><Route path="/settings" element={<Settings/>}/><Route path="*" element={<Navigate to="/" replace/>}/></Routes></main><div className={`toast ${toast ? "show" : ""}`}>{toast}</div></div></PanelContext.Provider>;
 }
 
 function Login({ onLogin }) { const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false); const submit=async e=>{e.preventDefault();setBusy(true);setError("");try{const r=await api("/auth/login",{method:"POST",body:JSON.stringify({username,password})});sessionStorage.setItem("panel-token",r.access_token);onLogin();}catch(e){setError(e.message)}finally{setBusy(false)}}; return <main className="login-page"><form className="card login-card" onSubmit={submit}><div className="brand"><b>◈</b>clear<span>pay</span></div><h2>Вход в панель</h2><p>Доступ только для авторизованных сотрудников.</p><label>Логин<input value={username} onChange={e=>setUsername(e.target.value)} autoComplete="username"/></label><label>Пароль<input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password"/></label>{error&&<small className="login-error">{error}</small>}<button className="primary" disabled={busy}>{busy?"Проверяем…":"Войти"}</button></form></main>; }
@@ -126,5 +126,111 @@ function OperationsAnalytics() {
   return <section className="operations-page"><PageHeader title="Операционный центр" text="Управление всеми проектами, подключениями, лимитами и расчётной прибылью в одном экране." action={<button onClick={reload}>↻ Обновить</button>}/><div className="network-kpis five"><Metric label="ПРОЕКТЫ" value={items.length} suffix="всего контуров" color="blue"/><Metric label="МАРШРУТЫ" value={active.length} suffix={`${ready} доступны сейчас`} color="green"/><Metric label="ОБОРОТ ЗА ДЕНЬ" value={money(used)} suffix="по всем маршрутам" color="violet"/><Metric label="ПРИБЫЛЬ ЗА ДЕНЬ" value={money(profit)} suffix="по текущим ставкам" color="green"/><Metric label="ДНЕВНАЯ ЁМКОСТЬ" value={capacity ? money(capacity) : "∞"} suffix="заданные лимиты" color="orange"/></div><article className="card network-board"><div className="network-board-head"><div><small>СЕТЬ ПОДКЛЮЧЕНИЙ</small><h3>Маршруты, лимиты и экономика по проектам</h3></div><span className="live-dot">● live из PostgreSQL</span></div>{items.length ? items.map(item => <div className="network-project" key={item.project.id}><div className="network-project-title"><span><b>{item.project.name}</b><small>{item.project.external_key} · площадка {item.project.default_platform_fee_percent}% · {item.project.is_active ? "проект включён" : "проект выключен"}</small></span><em>{item.provider_routes.filter(route => route.is_available).length}/{item.provider_routes.length} готовы</em></div><div className="network-grid network-head"><span>Подключение</span><span>Сумма / диапазон</span><span>День</span><span>Неделя</span><span>Экономика за день</span><span>Нагрузка</span><span>Статус</span><span/></div>{item.provider_routes.length ? item.provider_routes.map(route => { const max = Number(route.daily_amount_limit || 0); const percent = max ? Math.min(100, Math.round(Number(route.daily_used_amount || 0) / max * 100)) : 0; return <div className="network-grid" key={route.id}><span><b>{route.provider_name}</b><small>{route.name} · вес {route.weight} · prio {route.priority}</small></span><span>{route.min_amount ?? "—"} — {route.max_amount ?? "—"}<small>окно {route.available_from && route.available_to ? `${route.available_from.slice(0,5)}—${route.available_to.slice(0,5)}` : "24/7"}</small></span><span>{money(route.daily_used_amount)} / {route.daily_amount_limit ? money(route.daily_amount_limit) : "∞"}<small>{route.daily_used_transactions} операций</small></span><span>{money(route.weekly_used_amount)} / {route.weekly_amount_limit ? money(route.weekly_amount_limit) : "∞"}<small>прибыль {money(route.weekly_profit)}</small></span><span><b className={Number(route.daily_profit) >= 0 ? "profit-positive" : "profit-negative"}>{money(route.daily_profit)}</b><small>площадка {route.platform_fee_percent}% − провайдер {route.provider_fee_percent}%</small></span><span><i className="load-bar"><i style={{ width:`${percent}%` }}/></i><small>{max ? `${percent}% лимита` : "без лимита"}</small></span><span><i className={`tag ${route.is_available ? "succeeded" : "failed"}`}>{route.is_available ? "Готов" : route.unavailable_reason || "Выключен"}</i></span><button className="route-switch" onClick={() => toggleRoute(route)}>{route.is_active ? "Выключить" : "Включить"}</button></div>; }) : <Empty text="Подключений нет."/>}</div>) : <Empty text="Нет проектов для аналитики."/>}</article></section>;
 }
 
-Analytics = OperationsAnalytics;
+function routeLimitsForm(route) {
+  return {
+    name: route.name || "Основной маршрут",
+    priority: route.priority ?? 100,
+    weight: route.weight ?? 100,
+    min_amount: route.min_amount ?? "",
+    max_amount: route.max_amount ?? "",
+    daily_amount_limit: route.daily_amount_limit ?? "",
+    weekly_amount_limit: route.weekly_amount_limit ?? "",
+    daily_transactions_limit: route.daily_transactions_limit ?? "",
+    weekly_transactions_limit: route.weekly_transactions_limit ?? "",
+    available_from: route.available_from ? route.available_from.slice(0, 5) : "",
+    available_to: route.available_to ? route.available_to.slice(0, 5) : "",
+    is_active: route.is_active,
+  };
+}
+
+const numberOrNull = value => value === "" || value === null ? null : Number(value);
+
+function RouteLimitsDialog({ route, projectName, onClose, onSaved }) {
+  const [form, setForm] = useState(() => routeLimitsForm(route));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setForm(routeLimitsForm(route)), [route]);
+  const set = key => event => setForm(current => ({
+    ...current,
+    [key]: event.target.type === "checkbox" ? event.target.checked : event.target.value,
+  }));
+  const submit = async event => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/provider-routes/${route.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: form.name,
+          priority: Number(form.priority),
+          weight: Number(form.weight),
+          min_amount: numberOrNull(form.min_amount),
+          max_amount: numberOrNull(form.max_amount),
+          daily_amount_limit: numberOrNull(form.daily_amount_limit),
+          weekly_amount_limit: numberOrNull(form.weekly_amount_limit),
+          daily_transactions_limit: numberOrNull(form.daily_transactions_limit),
+          weekly_transactions_limit: numberOrNull(form.weekly_transactions_limit),
+          available_from: form.available_from || null,
+          available_to: form.available_to || null,
+          is_active: form.is_active,
+        }),
+      });
+      await onSaved();
+      onClose();
+    } catch (error) {
+      onSaved(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="route-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <article className="route-modal card" role="dialog" aria-modal="true" aria-labelledby="route-limits-title">
+      <header><div><small>ПЛАТЁЖКА В ПРОЕКТЕ</small><h2 id="route-limits-title">{route.provider_name}</h2><p>{projectName} · {route.name}</p></div><button type="button" className="route-modal-close" onClick={onClose} aria-label="Закрыть">×</button></header>
+      <form onSubmit={submit}>
+        <div className="route-form-section"><h3>Сумма и приоритет</h3><div className="route-form-grid">
+          <label>Название маршрута<input required value={form.name} onChange={set("name")}/></label>
+          <label>Приоритет<input type="number" min="0" max="100000" value={form.priority} onChange={set("priority")}/></label>
+          <label>Вес распределения<input type="number" min="1" max="100000" value={form.weight} onChange={set("weight")}/></label>
+          <label>Минимальная сумма, ₽<input type="number" min="0" step="0.01" placeholder="Без минимума" value={form.min_amount} onChange={set("min_amount")}/></label>
+          <label>Максимальная сумма, ₽<input type="number" min="0.01" step="0.01" placeholder="Без максимума" value={form.max_amount} onChange={set("max_amount")}/></label>
+        </div></div>
+        <div className="route-form-section"><h3>Лимиты по этой платёжке</h3><div className="route-form-grid">
+          <label>Сумма в день, ₽<input type="number" min="0.01" step="0.01" placeholder="Без лимита" value={form.daily_amount_limit} onChange={set("daily_amount_limit")}/></label>
+          <label>Платежей в день<input type="number" min="1" step="1" placeholder="Без лимита" value={form.daily_transactions_limit} onChange={set("daily_transactions_limit")}/></label>
+          <label>Сумма в неделю, ₽<input type="number" min="0.01" step="0.01" placeholder="Без лимита" value={form.weekly_amount_limit} onChange={set("weekly_amount_limit")}/></label>
+          <label>Платежей в неделю<input type="number" min="1" step="1" placeholder="Без лимита" value={form.weekly_transactions_limit} onChange={set("weekly_transactions_limit")}/></label>
+        </div></div>
+        <div className="route-form-section"><h3>Время работы</h3><div className="route-form-grid route-time-grid">
+          <label>С<input type="time" value={form.available_from} onChange={set("available_from")}/></label>
+          <label>До<input type="time" value={form.available_to} onChange={set("available_to")}/></label>
+        </div><small className="route-hint">Оба поля пустые — платёжка доступна круглосуточно. Время считается по Москве.</small></div>
+        <label className="toggle route-enabled"><input type="checkbox" checked={form.is_active} onChange={set("is_active")}/><i/>Маршрут включён и участвует в выборе платёжки</label>
+        <footer><small>Пустое поле означает, что лимита нет. Уже созданные платежи не меняются.</small><span><button type="button" onClick={onClose}>Отмена</button><button className="primary" disabled={busy}>{busy ? "Сохраняем…" : "Сохранить лимиты"}</button></span></footer>
+      </form>
+    </article>
+  </div>;
+}
+
+function OperationsDashboard() {
+  const { notice } = usePanel();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const reload = async () => { setLoading(true); try { setItems(await api("/analytics/projects")); } catch (error) { notice(error.message); } finally { setLoading(false); } };
+  useEffect(() => { reload(); }, []);
+  const toggleRoute = async route => { try { await api(`/provider-routes/${route.id}/activation`, { method:"PATCH", body:JSON.stringify({ is_active:!route.is_active }) }); await reload(); notice(`Маршрут ${route.is_active ? "выключен" : "включён"}`); } catch (error) { notice(error.message); } };
+  const routes = items.flatMap(item => item.provider_routes);
+  const active = routes.filter(route => route.is_active);
+  const used = routes.reduce((sum, route) => sum + Number(route.daily_used_amount || 0), 0);
+  const capacity = routes.reduce((sum, route) => sum + Number(route.daily_amount_limit || 0), 0);
+  const profit = routes.reduce((sum, route) => sum + Number(route.daily_profit || 0), 0);
+  const ready = routes.filter(route => route.is_available).length;
+  if (loading) return <section><PageHeader title="Операционный центр" text="Загружаем маршруты, лимиты и загрузку…"/><Empty text="Загрузка…"/></section>;
+  return <section className="operations-page"><PageHeader title="Операционный центр" text="По каждой платёжке можно изменить лимиты, рабочее время и приоритет прямо из этой таблицы." action={<button onClick={reload}>↻ Обновить</button>}/>
+    <div className="network-kpis five"><Metric label="ПРОЕКТЫ" value={items.length} suffix="всего контуров" color="blue"/><Metric label="МАРШРУТЫ" value={active.length} suffix={`${ready} доступны сейчас`} color="green"/><Metric label="ОБОРОТ ЗА ДЕНЬ" value={money(used)} suffix="по всем маршрутам" color="violet"/><Metric label="ПРИБЫЛЬ ЗА ДЕНЬ" value={money(profit)} suffix="по текущим ставкам" color="green"/><Metric label="ДНЕВНАЯ ЁМКОСТЬ" value={capacity ? money(capacity) : "∞"} suffix="заданные лимиты" color="orange"/></div>
+    <article className="card network-board"><div className="network-board-head"><div><small>СЕТЬ ПОДКЛЮЧЕНИЙ</small><h3>Маршруты, лимиты и экономика по проектам</h3></div><span className="live-dot">● live из PostgreSQL</span></div>{items.length ? items.map(item => <div className="network-project" key={item.project.id}><div className="network-project-title"><span><b>{item.project.name}</b><small>{item.project.external_key} · площадка {item.project.default_platform_fee_percent}% · {item.project.is_active ? "проект включён" : "проект выключен"}</small></span><em>{item.provider_routes.filter(route => route.is_available).length}/{item.provider_routes.length} готовы</em></div><div className="network-grid network-head"><span>Подключение</span><span>Сумма / диапазон</span><span>День</span><span>Неделя</span><span>Экономика за день</span><span>Нагрузка</span><span>Статус</span><span>Действия</span></div>{item.provider_routes.length ? item.provider_routes.map(route => { const max = Number(route.daily_amount_limit || 0); const percent = max ? Math.min(100, Math.round(Number(route.daily_used_amount || 0) / max * 100)) : 0; return <div className="network-grid" key={route.id}><span><b>{route.provider_name}</b><small>{route.name} · вес {route.weight} · prio {route.priority}</small></span><span>{route.min_amount ?? "—"} — {route.max_amount ?? "—"}<small>окно {route.available_from && route.available_to ? `${route.available_from.slice(0,5)}—${route.available_to.slice(0,5)}` : "24/7"}</small></span><span>{money(route.daily_used_amount)} / {route.daily_amount_limit ? money(route.daily_amount_limit) : "∞"}<small>{route.daily_used_transactions} / {route.daily_transactions_limit ?? "∞"} операций</small></span><span>{money(route.weekly_used_amount)} / {route.weekly_amount_limit ? money(route.weekly_amount_limit) : "∞"}<small>{route.weekly_used_transactions} / {route.weekly_transactions_limit ?? "∞"} операций</small></span><span><b className={Number(route.daily_profit) >= 0 ? "profit-positive" : "profit-negative"}>{money(route.daily_profit)}</b><small>площадка {route.platform_fee_percent}% − провайдер {route.provider_fee_percent}%</small></span><span><i className="load-bar"><i style={{ width:`${percent}%` }}/></i><small>{max ? `${percent}% лимита` : "без лимита"}</small></span><span><i className={`tag ${route.is_available ? "succeeded" : "failed"}`}>{route.is_available ? "Готов" : route.unavailable_reason || "Выключен"}</i></span><span className="network-actions"><button className="route-limits-button" onClick={() => setEditing({ route, projectName:item.project.name })}>Лимиты</button><button className="route-switch" onClick={() => toggleRoute(route)}>{route.is_active ? "Выключить" : "Включить"}</button></span></div>; }) : <Empty text="Подключений нет."/>}</div>) : <Empty text="Нет проектов для аналитики."/>}</article>
+    {editing && <RouteLimitsDialog route={editing.route} projectName={editing.projectName} onClose={() => setEditing(null)} onSaved={async error => { if (error) { notice(error); return; } await reload(); notice("Лимиты платёжки сохранены"); }}/>}
+  </section>;
+}
+
+Analytics = OperationsDashboard;
 export default App;

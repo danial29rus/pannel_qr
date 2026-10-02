@@ -1,7 +1,7 @@
-"""Generate safe, visually useful demo users and support dialogues.
+"""Generate synthetic buyers and support dialogues without external calls.
 
-All generated mailboxes use the RFC-reserved .test zone. This command does not
-send email, create payment transactions, or call an external service.
+Generated mailboxes use local-only demo domains. This command does not send
+email, create payment transactions, or call an external service.
 """
 from __future__ import annotations
 
@@ -68,10 +68,16 @@ def build_user(index: int, namespace: str, email_domain: str, rng: random.Random
     )
 
 
-async def seed(users_count: int, conversations_count: int, namespace: str, email_domain: str, seed_value: int, batch_size: int, refresh_namespace: bool) -> dict:
+async def seed(
+    users_count: int, conversations_count: int, namespace: str, email_domain: str,
+    seed_value: int, batch_size: int, refresh_namespace: bool, allow_production: bool = False,
+) -> dict:
     settings = get_settings()
-    if settings.environment.lower() not in {"development", "test"}:
-        raise RuntimeError("Demo seeding is allowed only when ENVIRONMENT is development or test")
+    environment = settings.environment.lower()
+    if environment not in {"development", "test", "production"}:
+        raise RuntimeError("Synthetic buyer seeding requires a known ENVIRONMENT")
+    if environment == "production" and not allow_production:
+        raise RuntimeError("Production requires the explicit --allow-production flag")
     if conversations_count > users_count:
         raise ValueError("conversations cannot exceed users")
     if email_domain and email_domain not in SAFE_EMAIL_DOMAINS:
@@ -98,10 +104,16 @@ async def seed(users_count: int, conversations_count: int, namespace: str, email
             await session.commit()
             return {"users": len(users), "conversations": 0, "namespace": namespace, "mode": "refreshed"}
 
-        users = [build_user(index, namespace, email_domain, rng) for index in range(1, users_count + 1)]
-        for start in range(0, len(users), batch_size):
-            await UserDAO.create_many(session, users[start:start + batch_size])
+        users: list[User] = []
+        for start in range(1, users_count + 1, batch_size):
+            batch = [
+                build_user(index, namespace, email_domain, rng)
+                for index in range(start, min(start + batch_size, users_count + 1))
+            ]
+            await UserDAO.create_many(session, batch)
             await session.commit()
+            if conversations_count:
+                users.extend(batch)
 
         now = datetime.now(timezone.utc)
         records: list[SupportConversation | SupportMessage] = []
@@ -140,12 +152,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20261001, help="Makes names and dialogue selection repeatable")
     parser.add_argument("--batch-size", type=int, default=500, choices=range(50, 5_001))
     parser.add_argument("--refresh-namespace", action="store_true", help="Update existing demo users in this namespace without creating more records")
+    parser.add_argument("--allow-production", action="store_true", help="Required before inserting synthetic users in production")
     return parser.parse_args()
 
 
 async def main() -> None:
     args = parse_args()
-    result = await seed(args.users, args.conversations, args.namespace, args.email_domain, args.seed, args.batch_size, args.refresh_namespace)
+    result = await seed(
+        args.users, args.conversations, args.namespace, args.email_domain, args.seed,
+        args.batch_size, args.refresh_namespace, args.allow_production,
+    )
     print(f"{result['mode'].title()}: {result['users']} demo users and {result['conversations']} support conversations (namespace: {result['namespace']}).")
     await engine.dispose()
 

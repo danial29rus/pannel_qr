@@ -39,6 +39,21 @@ class UserDAO:
     async def list_by_email_marker(session: AsyncSession, marker: str) -> Sequence[User]:
         return list((await session.scalars(select(User).where(User.email.ilike(f"%{marker}%")))).all())
 
+    @staticmethod
+    async def random_active_with_email(session: AsyncSession) -> User | None:
+        """Return a buyer eligible for providers which require an email.
+
+        The pool is intentionally global: it is a panel-owned pool of synthetic
+        buyers and is not supplied by the merchant in a payment request.
+        """
+        return await session.scalar(
+            select(User).where(
+                User.is_active.is_(True),
+                User.email.is_not(None),
+                User.email != "",
+            ).order_by(func.random()).limit(1)
+        )
+
 
 class ProjectDAO:
     @staticmethod
@@ -54,6 +69,10 @@ class ProjectDAO:
     @staticmethod
     async def get_by_external_key(session: AsyncSession, external_key: str) -> Project | None:
         return await session.scalar(select(Project).where(Project.external_key == external_key))
+
+    @staticmethod
+    async def get_by_external_incoming_token(session: AsyncSession, token: str) -> Project | None:
+        return await session.scalar(select(Project).where(Project.external_incoming_token == token))
 
     @staticmethod
     async def get_for_update(session: AsyncSession, project_id: uuid.UUID) -> Project | None:

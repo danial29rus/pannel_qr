@@ -92,12 +92,21 @@ Use only genuine catalogue positions, cart lines, delivery, taxes, and documente
 
 ## Demo users and visible support conversations
 
-The development-only seeder creates UUID users, unique logins, human-readable names, companies, non-routable Russian-format phone numbers and readable Russian support threads. Email domains are varied for the interface (`gmail.localhost`, `yandex.localhost`, `outlook.localhost`, etc.), but all end in the reserved local `.localhost` zone, so they are not real mailbox addresses. It neither sends email nor creates real payments. It refuses to run outside `ENVIRONMENT=development` or `test`.
+The synthetic-buyer seeder creates UUID users, unique logins, human-readable names, companies, non-routable Russian-format phone numbers and optional support threads. Email domains are varied for the interface (`gmail.localhost`, `yandex.localhost`, `outlook.localhost`, etc.), but all end in the reserved local `.localhost` zone, so they are not real mailbox addresses. It neither sends email nor creates payments. In production it requires the deliberate `--allow-production` flag.
 
 To generate 10,000 users and 1,200 conversations:
 
 ```bash
 docker compose exec api python -m app.scripts.seed_demo --users 10000 --conversations 1200 --namespace demo-october
+```
+
+For a production buyer pool without support conversations:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml exec api \
+  python -m app.scripts.seed_demo --users 30000 --conversations 0 \
+  --namespace buyer-pool-20261002 --email-domain clients.localhost \
+  --batch-size 1000 --allow-production
 ```
 
 `--namespace` must be new on every additional run because email and Telegram login are unique. Open the Support page at `http://localhost:15173` to view the generated dialogues. For a small preview, omit the arguments (it creates 200 users and 40 conversations).
@@ -111,6 +120,18 @@ docker compose exec api python -m app.scripts.seed_demo --namespace demo-october
 Mailpit is a local SMTP inbox: enable it with `SMTP_ENABLED=true` in `.env`, then operator replies are delivered to the local inbox at `http://localhost:18025`; no mail leaves the machine. SMTP does not create mailboxes. Do not use public third-party recipient domains for generated data.
 
 ## Integrating the processing platform
+
+For a PayGateCore-compatible merchant QR request, call `POST /api/v1/transactions/qr` with `Authorization: Bearer <project external token>` and this minimal body:
+
+```json
+{
+  "amount": "100",
+  "currency": "RUB",
+  "merchant_transaction_id": "merchant-order-123"
+}
+```
+
+The endpoint resolves the project from the token, selects one random active buyer with an email from the panel pool, creates the payment through the project's configured route, and returns the QR `payment_url`. Reusing the same `merchant_transaction_id` is idempotent.
 
 The processor documentation was not attached yet, so the actual external calls are intentionally represented by `DemoProcessorAdapter`. Replace it with an adapter in `app/payments/adapters/` and register it in `app/payments/registry.py`. The adapter must implement `create_payment`, `get_payment`, `parse_webhook`, and `verify_webhook`; all provider credentials stay in the `payment_providers` configuration, preferably encrypted by the deployment secret manager.
 

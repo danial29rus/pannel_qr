@@ -5,7 +5,7 @@ import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
+from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
 from app.dao.repositories import (
     ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
     ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO,
@@ -178,6 +178,47 @@ class PaymentService:
             transaction = await create_transaction(session, payload, idempotency_key)
         await session.refresh(transaction)
         return transaction
+
+    @staticmethod
+    async def create_merchant_qr_payment(
+        session: AsyncSession, project_id, payload: MerchantQrPaymentCreate,
+    ) -> Transaction:
+        """Create a QR payment using a random email-bearing buyer from the pool."""
+        idempotency_key = f"merchant-qr:{payload.merchant_transaction_id}"
+        existing = await TransactionDAO.get_by_idempotency(session, project_id, idempotency_key)
+        if existing:
+            return existing
+
+        buyer = await UserDAO.random_active_with_email(session)
+        if not buyer:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No active buyer with an email is available in the user pool",
+            )
+        buyer_id = buyer.id
+
+        # The duplicate check and random selection opened an implicit read
+        # transaction. PaymentService.create owns the write transaction.
+        await session.rollback()
+        return await PaymentService.create(
+            session,
+            TransactionCreate(
+                project_id=project_id,
+                user_id=buyer_id,
+                amount=payload.amount,
+                currency=payload.currency,
+                description=payload.description or f"QR payment {payload.merchant_transaction_id}",
+                extra={
+                    "merchant_transaction_id": payload.merchant_transaction_id,
+                    "merchant_webhook_url": payload.webhook_url,
+                    "website_url": payload.return_url,
+                    "auto_amount_step": payload.auto_amount_step,
+                    "auto_amount_limit": payload.auto_amount_limit,
+                    "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
+                },
+            ),
+            idempotency_key,
+        )
 
     @staticmethod
     async def process_webhook(session: AsyncSession, provider_code: str, body: bytes, headers: dict[str, str]) -> None:

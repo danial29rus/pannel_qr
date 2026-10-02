@@ -29,6 +29,21 @@ class ExternalPlatformService:
         return project
 
     @staticmethod
+    async def project_for_token(session: AsyncSession, supplied_token: str | None) -> Project:
+        """Resolve a merchant project for the PayGateCore-compatible endpoint."""
+        if not supplied_token:
+            raise HTTPException(status_code=401, detail="Invalid external platform token")
+        project = await ProjectDAO.get_by_external_incoming_token(session, supplied_token)
+        if (
+            not project
+            or not project.is_active
+            or not project.external_incoming_token
+            or not hmac.compare_digest(project.external_incoming_token, supplied_token)
+        ):
+            raise HTTPException(status_code=401, detail="Invalid external platform token")
+        return project
+
+    @staticmethod
     async def log_request(
         session: AsyncSession, project_id, external_order_id: str | None, request_payload: dict,
         *, outcome: str, http_status: int, response_payload: dict | None = None, error: str | None = None,
