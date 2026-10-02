@@ -316,8 +316,15 @@ class PaymentTraceEntry(BaseModel):
     created_at: datetime
 
 
+class PaymentTraceCustomer(BaseModel):
+    id: uuid.UUID
+    full_name: str
+    email: str | None
+
+
 class TransactionTrace(BaseModel):
     payment: TransactionListItem
+    customer: PaymentTraceCustomer | None = None
     timeline: list[PaymentTraceEntry]
 
 

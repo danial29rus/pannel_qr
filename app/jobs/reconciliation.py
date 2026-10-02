@@ -24,6 +24,7 @@ async def reconcile_open_orders() -> None:
         callback_orders = await OrderDAO.list_requiring_callback(session)
         orders = {order.id: order for order in [*open_orders, *callback_orders]}.values()
         direct_transaction_ids = await TransactionDAO.list_open_without_order(session)
+        merchant_callback_transaction_ids = await TransactionDAO.list_requiring_merchant_callback(session)
     for order in orders:
         try:
             await reconcile_order(order.id)
@@ -36,6 +37,14 @@ async def reconcile_open_orders() -> None:
             await reconcile_direct_transaction(transaction_id)
         except Exception:
             # The next scheduled pass retries transient provider failures.
+            continue
+    for transaction_id in merchant_callback_transaction_ids:
+        try:
+            async with SessionLocal() as session:
+                await ExternalPlatformService.deliver_merchant_status_for_transaction(session, transaction_id)
+        except Exception:
+            # A failed merchant endpoint is retried on the next pass and every
+            # attempt remains in the transaction trace.
             continue
 
 

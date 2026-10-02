@@ -206,6 +206,8 @@ class Transaction(Base):
     extra: Mapped[dict] = mapped_column(JSONB, default=dict)
     # Used by reconciliation for direct API payments that do not have an Order.
     last_status_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Last terminal state successfully delivered to the merchant callback.
+    merchant_callback_status: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

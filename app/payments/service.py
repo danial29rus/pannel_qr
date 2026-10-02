@@ -5,7 +5,7 @@ import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
+from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceCustomer, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
 from app.dao.repositories import (
     ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
     ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO,
@@ -252,6 +252,7 @@ class PaymentService:
                 return
             raise HTTPException(status_code=502, detail="Could not verify payment with provider") from exc
         callback_order_id = None
+        callback_transaction_id = None
         async with session.begin():
             transaction = await TransactionDAO.get_by_provider_external_for_update(session, provider_id, payment.external_id)
             if not transaction:
@@ -271,8 +272,12 @@ class PaymentService:
                 project = await ProjectDAO.get(session, transaction.project_id)
                 if project:
                     callback_order_id = order.id
+            if getattr(transaction, "extra", {}).get("merchant_transaction_id") and transaction.state in (TransactionState.succeeded, TransactionState.failed, TransactionState.cancelled, TransactionState.refunded):
+                callback_transaction_id = transaction.id
         if callback_order_id:
             await ExternalPlatformService.deliver_final_status_for_order(session, callback_order_id)
+        if callback_transaction_id:
+            await ExternalPlatformService.deliver_merchant_status_for_transaction(session, callback_transaction_id)
 
     @staticmethod
     async def events(session: AsyncSession, transaction_id) -> list[TransactionEvent]:
@@ -313,6 +318,7 @@ class PaymentService:
             raise HTTPException(status_code=404, detail="Transaction not found")
         provider = await ProviderDAO.get(session, transaction.provider_id)
         order = await OrderDAO.get_by_transaction(session, transaction.id)
+        customer = await UserDAO.get(session, transaction.user_id) if transaction.user_id else None
         payment = TransactionListItem(
             id=transaction.id, project_id=transaction.project_id, user_id=transaction.user_id,
             provider_id=transaction.provider_id, external_id=transaction.external_id,
@@ -358,6 +364,7 @@ class PaymentService:
             title = {
                 "create_payment": "Панель отправила платёж в платёжку",
                 "webhook_received": "Получен webhook от платёжки",
+                "merchant_status_webhook": "Панель отправила статус площадке",
             }.get(record.operation, f"Платёжка: {record.operation}")
             timeline.append(PaymentTraceEntry(
                 id=f"provider-attempt:{record.id}", stage="provider_attempt", title=title,
@@ -374,4 +381,8 @@ class PaymentService:
                 error=record.error, created_at=record.created_at,
             ))
         timeline.sort(key=lambda entry: entry.created_at)
-        return TransactionTrace(payment=payment, timeline=timeline)
+        return TransactionTrace(
+            payment=payment,
+            customer=PaymentTraceCustomer(id=customer.id, full_name=customer.full_name, email=customer.email) if customer else None,
+            timeline=timeline,
+        )

@@ -4,7 +4,7 @@
 .open-trace{color:#95a7ff!important}
 .payment-trace{padding:16px 22px 20px;background:#0c1525;border-bottom:1px solid #30415f}
 .loading-trace{color:#9aaac1;font-size:12px}
-.trace-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding-bottom:14px;border-bottom:1px solid #253650}
+.trace-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding-bottom:14px;border-bottom:1px solid #253650}
 .trace-summary span{min-width:0}.trace-summary small,.trace-summary em{display:block;color:#778aa5;font-size:10px;font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trace-summary b{display:block;font-size:12px;margin:4px 0}
 .trace-line{position:relative;margin:14px 0 0 8px;border-left:1px solid #3a4f72}
 /* The numbered marker is absolutely positioned, therefore it must not have

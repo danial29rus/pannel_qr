@@ -196,7 +196,7 @@ async def accept_external_order(project_key: str, payload: ExternalOrderCreate, 
 
 @router.post("/transactions/qr", response_model=MerchantQrPaymentResponse, status_code=status.HTTP_201_CREATED)
 async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: Request, session: AsyncSession = Depends(get_session)):
-    """PayGateCore-compatible merchant endpoint: Bearer token, no buyer or product in the body."""
+    """PayGateCore-compatible merchant endpoint: no buyer or product in the body."""
     authorization = request.headers.get("authorization", "")
     token = authorization[7:] if authorization.lower().startswith("bearer ") else None
     project = await ExternalPlatformService.project_for_token(session, token)

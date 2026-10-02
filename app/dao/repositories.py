@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -297,6 +297,23 @@ class TransactionDAO:
         )).all())
 
     @staticmethod
+    async def list_requiring_merchant_callback(session: AsyncSession, limit: int = 200) -> list[uuid.UUID]:
+        """Terminal direct-API payments whose merchant callback did not succeed."""
+        return list((await session.scalars(
+            select(Transaction.id).where(
+                Transaction.idempotency_key.like("merchant-qr:%"),
+                Transaction.state.in_((
+                    TransactionState.succeeded, TransactionState.failed,
+                    TransactionState.cancelled, TransactionState.refunded,
+                )),
+                or_(
+                    Transaction.merchant_callback_status.is_(None),
+                    Transaction.merchant_callback_status != cast(Transaction.state, String),
+                ),
+            ).order_by(Transaction.updated_at).limit(limit)
+        )).all())
+
+    @staticmethod
     async def amount_used(
         session: AsyncSession, project_id: uuid.UUID, direction: TransactionDirection, currency: str,
         since: datetime, counted_states: tuple[TransactionState, ...],
@@ -442,6 +459,14 @@ class ProviderRequestAttemptDAO:
         return list((await session.scalars(select(ProviderRequestAttempt).where(
             ProviderRequestAttempt.transaction_id == transaction_id,
         ).order_by(ProviderRequestAttempt.created_at))).all())
+
+    @staticmethod
+    async def next_attempt_number(session: AsyncSession, transaction_id: uuid.UUID, operation: str) -> int:
+        value = await session.scalar(select(func.coalesce(func.max(ProviderRequestAttempt.attempt), 0)).where(
+            ProviderRequestAttempt.transaction_id == transaction_id,
+            ProviderRequestAttempt.operation == operation,
+        ))
+        return int(value or 0) + 1
 
 
 class IntegrationRequestLogDAO:

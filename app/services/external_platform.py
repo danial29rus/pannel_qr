@@ -7,13 +7,28 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dao.repositories import ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, OrderDAO, ProjectDAO
-from app.db.models import ExternalCallbackAttempt, IntegrationRequestLog, Order, Project
+from app.dao.repositories import (
+    ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, OrderDAO, ProjectDAO,
+    ProviderRequestAttemptDAO, TransactionDAO,
+)
+from app.db.models import (
+    ExternalCallbackAttempt, IntegrationRequestLog, Order, Project,
+    ProviderRequestAttempt, TransactionState,
+)
+
+
+PAYGATE_TERMINAL_STATUSES = {
+    TransactionState.succeeded: "paid",
+    TransactionState.failed: "failed",
+    TransactionState.cancelled: "cancelled",
+    TransactionState.refunded: "refunded",
+}
 
 
 class ExternalPlatformService:
@@ -108,3 +123,79 @@ class ExternalPlatformService:
         if not project:
             return False
         return await ExternalPlatformService.deliver_final_status(session, project, order)
+
+    @staticmethod
+    async def deliver_merchant_status_for_transaction(session: AsyncSession, transaction_id) -> bool:
+        """Send the provider-compatible merchant status callback for a QR payment.
+
+        Only a successful 2xx response marks the current state as delivered;
+        the reconciliation worker retries failed deliveries and keeps every
+        attempt in the transaction trace.
+        """
+        transaction = await TransactionDAO.get(session, transaction_id)
+        if not transaction or not transaction.extra.get("merchant_transaction_id"):
+            return True
+        status = PAYGATE_TERMINAL_STATUSES.get(transaction.state)
+        if not status or transaction.merchant_callback_status == transaction.state.value:
+            return True
+
+        project = await ProjectDAO.get(session, transaction.project_id)
+        if not project:
+            return False
+        callback_url = transaction.extra.get("merchant_webhook_url") or project.external_callback_url
+        # A URL is optional in the create request. If it was not configured at
+        # either level there is intentionally no callback to retry.
+        if not callback_url:
+            transaction.merchant_callback_status = transaction.state.value
+            await session.commit()
+            return True
+
+        operation = "merchant_status_webhook"
+        attempt = await ProviderRequestAttemptDAO.next_attempt_number(session, transaction.id, operation)
+        paid_amount = transaction.settled_amount
+        if paid_amount is None:
+            paid_amount = transaction.amount if transaction.state == TransactionState.succeeded else Decimal("0")
+        payload = {
+            "merchant_transaction_id": transaction.extra["merchant_transaction_id"],
+            "paid_amount": str(paid_amount),
+            "status": status,
+            "type": "in",
+        }
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(callback_url, content=raw, headers={
+                    "Content-Type": "application/json",
+                })
+            try:
+                response_payload = response.json() if response.content and "json" in response.headers.get("content-type", "") else {"body": response.text[:1000]}
+            except ValueError:
+                response_payload = {"body": response.text[:1000]}
+            successful = 200 <= response.status_code < 300
+            await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
+                transaction_id=transaction.id, operation=operation, attempt=attempt,
+                outcome="success" if successful else "retryable_error", request_payload={
+                    "method": "POST",
+                    "url": callback_url,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": payload,
+                },
+                response_payload=response_payload, http_status=response.status_code,
+                error=None if successful else f"HTTP {response.status_code}",
+            ))
+            if successful:
+                transaction.merchant_callback_status = transaction.state.value
+        except httpx.HTTPError as exc:
+            await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
+                transaction_id=transaction.id, operation=operation, attempt=attempt,
+                outcome="retryable_error", request_payload={
+                    "method": "POST",
+                    "url": callback_url,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": payload,
+                }, response_payload=None,
+                http_status=None, error=str(exc),
+            ))
+            successful = False
+        await session.commit()
+        return successful
