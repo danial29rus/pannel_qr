@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
-    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProjectRoutingAnalytics,
-    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionRead, UserCreate, UserRead,
+    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
+    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionRead, TransactionTrace, UserCreate, UserRead,
 )
 from app.db.session import get_session
 from app.db.models import ActorRole
@@ -113,6 +113,11 @@ async def list_provider_routes(project_id: uuid.UUID, session: AsyncSession = De
     return await RoutingService.list_routes(session, project_id)
 
 
+@router.put("/provider-routes/{route_id}", response_model=ProviderRouteRead, dependencies=[Depends(require_roles(ActorRole.admin))])
+async def update_provider_route(route_id: uuid.UUID, payload: ProviderRouteUpdate, session: AsyncSession = Depends(get_session)):
+    return await RoutingService.update_route(session, route_id, payload)
+
+
 @router.post("/products", response_model=ProductRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(ActorRole.admin))])
 async def create_product(payload: ProductCreate, session: AsyncSession = Depends(get_session)):
     return await OrderService.create_product(session, payload)
@@ -190,9 +195,15 @@ async def add_transaction(
     return await PaymentService.create(session, payload, idempotency_key)
 
 
-@router.get("/transactions", response_model=list[TransactionRead], dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator, ActorRole.viewer))])
+@router.get("/transactions", response_model=list[TransactionListItem], dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator, ActorRole.viewer))])
 async def list_transactions(project_id: uuid.UUID, limit: int = 50, session: AsyncSession = Depends(get_session)):
     return await PaymentService.list(session, project_id, limit)
+
+
+@router.get("/transactions/{transaction_id}/trace", response_model=TransactionTrace, dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator))])
+async def transaction_trace(transaction_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
+    """The complete read-only route: platform → provider → webhook → callback."""
+    return await PaymentService.trace(session, transaction_id)
 
 
 @router.get("/transactions/{transaction_id}/events", dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator))])

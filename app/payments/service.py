@@ -5,8 +5,12 @@ from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import TransactionCreate
-from app.dao.repositories import LimitDAO, ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO, TransactionEventDAO, UserDAO
+from app.api.schemas import PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
+from app.dao.repositories import (
+    ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
+    ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO,
+    TransactionEventDAO, UserDAO,
+)
 from app.db.models import LimitPeriod, ProviderRequestAttempt, Transaction, TransactionEvent, TransactionState
 from app.payments.adapters.base import RetryableProviderError
 from app.payments.adapters.base import CreatePaymentRequest, ProviderPayment
@@ -209,5 +213,97 @@ class PaymentService:
         return await TransactionEventDAO.list_by_transaction(session, transaction_id)
 
     @staticmethod
-    async def list(session: AsyncSession, project_id, limit: int) -> list[Transaction]:
-        return await TransactionDAO.list_by_project(session, project_id, min(max(limit, 1), 200))
+    def _operation_row(row) -> TransactionListItem:
+        transaction, provider_code, provider_name, order_id, order_reference, external_order_id = row
+        return TransactionListItem(
+            id=transaction.id, project_id=transaction.project_id, user_id=transaction.user_id,
+            provider_id=transaction.provider_id, external_id=transaction.external_id,
+            payment_url=transaction.payment_url, direction=transaction.direction,
+            state=transaction.state, amount=transaction.amount, currency=transaction.currency,
+            settled_amount=transaction.settled_amount, fee_amount=transaction.fee_amount,
+            description=transaction.description, created_at=transaction.created_at,
+            updated_at=transaction.updated_at, provider_code=provider_code,
+            provider_name=provider_name, order_id=order_id, order_reference=order_reference,
+            external_order_id=external_order_id,
+        )
+
+    @staticmethod
+    async def list(session: AsyncSession, project_id, limit: int) -> list[TransactionListItem]:
+        rows = await TransactionDAO.list_operation_rows(session, project_id, min(max(limit, 1), 200))
+        return [PaymentService._operation_row(row) for row in rows]
+
+    @staticmethod
+    async def trace(session: AsyncSession, transaction_id) -> TransactionTrace:
+        """Return the full, chronologically ordered audit trail for one payment.
+
+        The data already exists in separate append-only logs. This projection is
+        deliberately read-only: operators can see the path without changing the
+        payment or retrying a provider request by accident.
+        """
+        transaction = await TransactionDAO.get(session, transaction_id)
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        provider = await ProviderDAO.get(session, transaction.provider_id)
+        order = await OrderDAO.get_by_transaction(session, transaction.id)
+        payment = TransactionListItem(
+            id=transaction.id, project_id=transaction.project_id, user_id=transaction.user_id,
+            provider_id=transaction.provider_id, external_id=transaction.external_id,
+            payment_url=transaction.payment_url, direction=transaction.direction,
+            state=transaction.state, amount=transaction.amount, currency=transaction.currency,
+            settled_amount=transaction.settled_amount, fee_amount=transaction.fee_amount,
+            description=transaction.description, created_at=transaction.created_at,
+            updated_at=transaction.updated_at,
+            provider_code=provider.code if provider else "unknown",
+            provider_name=provider.name if provider else "Удалённое подключение",
+            order_id=order.id if order else None,
+            order_reference=order.reference if order else None,
+            external_order_id=order.external_order_id if order else None,
+        )
+        events = await TransactionEventDAO.list_by_transaction(session, transaction.id)
+        provider_attempts = await ProviderRequestAttemptDAO.list_by_transaction(session, transaction.id)
+        platform_requests = await IntegrationRequestLogDAO.list_for_external_order(
+            session, transaction.project_id, order.external_order_id if order else None,
+        )
+        callbacks = await ExternalCallbackAttemptDAO.list_by_order(session, order.id if order else None)
+
+        timeline: list[PaymentTraceEntry] = []
+        for record in platform_requests:
+            timeline.append(PaymentTraceEntry(
+                id=f"platform-request:{record.id}", stage="platform_request",
+                title="Площадка отправила заказ в панель", outcome=record.outcome,
+                http_status=record.http_status, payload={
+                    "request": record.request_payload, "response": record.response_payload,
+                }, error=record.error, created_at=record.created_at,
+            ))
+        for record in events:
+            timeline.append(PaymentTraceEntry(
+                id=f"payment-event:{record.id}", stage="payment_event",
+                title={
+                    "transaction.created": "Платёж создан в панели",
+                    "provider.payment_created": "Платёжка приняла создание платежа",
+                    "provider.status_changed": "Статус подтверждён у платёжки",
+                }.get(record.event_type, record.event_type),
+                state=record.state, previous_state=record.previous_state,
+                actor=record.actor, payload=record.payload, created_at=record.created_at,
+            ))
+        for record in provider_attempts:
+            title = {
+                "create_payment": "Панель отправила платёж в платёжку",
+                "webhook_received": "Получен webhook от платёжки",
+            }.get(record.operation, f"Платёжка: {record.operation}")
+            timeline.append(PaymentTraceEntry(
+                id=f"provider-attempt:{record.id}", stage="provider_attempt", title=title,
+                outcome=record.outcome, attempt=record.attempt, http_status=record.http_status,
+                payload={"request": record.request_payload, "response": record.response_payload},
+                error=record.error, created_at=record.created_at,
+            ))
+        for record in callbacks:
+            timeline.append(PaymentTraceEntry(
+                id=f"platform-callback:{record.id}", stage="platform_callback",
+                title="Панель отправила финальный статус на площадку", outcome=record.outcome,
+                attempt=record.attempt, http_status=record.http_status,
+                payload={"request": record.request_payload, "response": record.response_payload},
+                error=record.error, created_at=record.created_at,
+            ))
+        timeline.sort(key=lambda entry: entry.created_at)
+        return TransactionTrace(payment=payment, timeline=timeline)

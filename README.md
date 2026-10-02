@@ -120,4 +120,8 @@ MulenPay is registered as the `mulenpay` adapter. Its create-payment request inc
 
 ## Routing and balancing
 
-Create a route with `POST /api/v1/projects/{project_id}/provider-routes`. When `provider_code` is omitted in a new transaction, the balancer chooses an active route that is inside its work window and has enough daily/weekly capacity. It prefers lower `priority`, then the least-used eligible route, then a higher weight. Use `PATCH /api/v1/provider-routes/{route_id}/activation` to switch a route on or off without deleting its limits.
+Create a route with `POST /api/v1/projects/{project_id}/provider-routes`. When `provider_code` is omitted in a new transaction, the balancer chooses an active route that is inside its work window and has enough daily/weekly capacity. It prefers lower `priority`, then the least-used eligible route, then a higher weight. Use `PUT /api/v1/provider-routes/{route_id}` to update its time window, amount range and daily/weekly amount and payment-count limits; use `PATCH /api/v1/provider-routes/{route_id}/activation` to switch it on or off without deleting its limits.
+
+## Payment trace for integrations
+
+`GET /api/v1/transactions/{transaction_id}/trace` gives an operator one ordered, read-only history of the payment: the request from the external platform, local payment creation, each provider request and response, provider webhook, state changes, and final callback attempts back to the platform. The panel's **Журнал платежей** opens this trace by clicking a payment; technical request/response payloads stay collapsed until needed.

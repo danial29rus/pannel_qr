@@ -208,6 +208,25 @@ class TransactionDAO:
         )).all())
 
     @staticmethod
+    async def list_operation_rows(session: AsyncSession, project_id: uuid.UUID, limit: int):
+        """Payment rows together with the provider and optional originating order.
+
+        Keeping this as one query prevents the panel from doing an N+1 lookup
+        for every payment shown in the operations journal.
+        """
+        return (await session.execute(
+            select(
+                Transaction, PaymentProvider.code, PaymentProvider.name,
+                Order.id, Order.reference, Order.external_order_id,
+            )
+            .join(PaymentProvider, PaymentProvider.id == Transaction.provider_id)
+            .outerjoin(Order, Order.transaction_id == Transaction.id)
+            .where(Transaction.project_id == project_id)
+            .order_by(Transaction.created_at.desc())
+            .limit(limit)
+        )).all()
+
+    @staticmethod
     async def amount_used(
         session: AsyncSession, project_id: uuid.UUID, direction: TransactionDirection, currency: str,
         since: datetime, counted_states: tuple[TransactionState, ...],
@@ -362,6 +381,17 @@ class IntegrationRequestLogDAO:
         await session.flush()
         return record
 
+    @staticmethod
+    async def list_for_external_order(
+        session: AsyncSession, project_id: uuid.UUID, external_order_id: str | None,
+    ) -> list[IntegrationRequestLog]:
+        if not external_order_id:
+            return []
+        return list((await session.scalars(select(IntegrationRequestLog).where(
+            IntegrationRequestLog.project_id == project_id,
+            IntegrationRequestLog.external_order_id == external_order_id,
+        ).order_by(IntegrationRequestLog.created_at))).all())
+
 
 class ExternalCallbackAttemptDAO:
     @staticmethod
@@ -376,6 +406,14 @@ class ExternalCallbackAttemptDAO:
             ExternalCallbackAttempt.order_id == order_id,
         ))
         return int(value or 0) + 1
+
+    @staticmethod
+    async def list_by_order(session: AsyncSession, order_id: uuid.UUID | None) -> list[ExternalCallbackAttempt]:
+        if not order_id:
+            return []
+        return list((await session.scalars(select(ExternalCallbackAttempt).where(
+            ExternalCallbackAttempt.order_id == order_id,
+        ).order_by(ExternalCallbackAttempt.created_at))).all())
 
 
 class SupportDAO:

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ProviderRouteCreate
+from app.api.schemas import ProviderRouteCreate, ProviderRouteUpdate
 from app.dao.repositories import ProviderDAO, ProviderRouteDAO, ProjectDAO, TransactionDAO
 from app.db.models import PaymentProvider, ProjectProviderRoute, TransactionState
 
@@ -48,11 +48,15 @@ class RouteEvaluation:
 
 class RoutingService:
     @staticmethod
-    async def create_route(session: AsyncSession, project_id: uuid.UUID, payload: ProviderRouteCreate) -> ProjectProviderRoute:
+    def _validate_route_bounds(payload: ProviderRouteCreate | ProviderRouteUpdate) -> None:
         if payload.min_amount is not None and payload.max_amount is not None and payload.min_amount > payload.max_amount:
             raise HTTPException(status_code=422, detail="min_amount cannot exceed max_amount")
         if (payload.available_from is None) != (payload.available_to is None):
             raise HTTPException(status_code=422, detail="Set both available_from and available_to, or neither")
+
+    @staticmethod
+    async def create_route(session: AsyncSession, project_id: uuid.UUID, payload: ProviderRouteCreate) -> ProjectProviderRoute:
+        RoutingService._validate_route_bounds(payload)
         if not await ProjectDAO.get(session, project_id):
             raise HTTPException(status_code=404, detail="Project not found")
         provider = await ProviderDAO.get(session, payload.provider_id)
@@ -78,6 +82,19 @@ class RoutingService:
         if not route:
             raise HTTPException(status_code=404, detail="Provider route not found")
         route.is_active = is_active
+        await ProviderRouteDAO.save(session, route)
+        await session.commit()
+        await session.refresh(route)
+        return route
+
+    @staticmethod
+    async def update_route(session: AsyncSession, route_id: uuid.UUID, payload: ProviderRouteUpdate) -> ProjectProviderRoute:
+        RoutingService._validate_route_bounds(payload)
+        route = await ProviderRouteDAO.get(session, route_id)
+        if not route:
+            raise HTTPException(status_code=404, detail="Provider route not found")
+        for field, value in payload.model_dump().items():
+            setattr(route, field, value)
         await ProviderRouteDAO.save(session, route)
         await session.commit()
         await session.refresh(route)

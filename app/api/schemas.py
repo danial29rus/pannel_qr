@@ -158,6 +158,22 @@ class ProviderRouteRead(ProviderRouteCreate, ORMModel):
     updated_at: datetime
 
 
+class ProviderRouteUpdate(BaseModel):
+    """Operational settings of an existing project/provider connection."""
+    name: str = Field(default="Основной маршрут", min_length=1, max_length=100)
+    priority: int = Field(default=100, ge=0, le=100_000)
+    weight: int = Field(default=100, ge=1, le=100_000)
+    min_amount: Decimal | None = Field(default=None, ge=0, max_digits=20, decimal_places=4)
+    max_amount: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
+    daily_amount_limit: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
+    weekly_amount_limit: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
+    daily_transactions_limit: int | None = Field(default=None, gt=0)
+    weekly_transactions_limit: int | None = Field(default=None, gt=0)
+    available_from: time | None = None
+    available_to: time | None = None
+    is_active: bool = True
+
+
 class ProviderRouteActivationUpdate(BaseModel):
     is_active: bool
 
@@ -236,6 +252,7 @@ class TransactionRead(ORMModel):
     id: uuid.UUID
     project_id: uuid.UUID
     user_id: uuid.UUID | None
+    provider_id: uuid.UUID
     external_id: str | None
     payment_url: str | None
     direction: TransactionDirection
@@ -247,6 +264,36 @@ class TransactionRead(ORMModel):
     description: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class TransactionListItem(TransactionRead):
+    """A payment row with enough context to be useful in the operations list."""
+    provider_code: str
+    provider_name: str
+    order_id: uuid.UUID | None = None
+    order_reference: str | None = None
+    external_order_id: str | None = None
+
+
+class PaymentTraceEntry(BaseModel):
+    """One immutable step in the life of a payment, ordered by occurrence."""
+    id: str
+    stage: str
+    title: str
+    outcome: str | None = None
+    state: TransactionState | None = None
+    previous_state: TransactionState | None = None
+    actor: str | None = None
+    attempt: int | None = None
+    http_status: int | None = None
+    payload: dict | None = None
+    error: str | None = None
+    created_at: datetime
+
+
+class TransactionTrace(BaseModel):
+    payment: TransactionListItem
+    timeline: list[PaymentTraceEntry]
 
 
 class ProductCreate(BaseModel):
