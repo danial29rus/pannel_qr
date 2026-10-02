@@ -9,6 +9,11 @@ def percent_of(amount, rate):
     return amount * rate / 100
 
 
+def commission_margin(amount, client_fee_percent, provider_fee_percent):
+    """Commission income only; merchandise margin is outside this model."""
+    return percent_of(amount, client_fee_percent) - percent_of(amount, provider_fee_percent)
+
+
 class RoutingAnalyticsService:
     @staticmethod
     async def all_projects(session: AsyncSession) -> list[ProjectRoutingAnalytics]:
@@ -35,10 +40,18 @@ class RoutingAnalyticsService:
                     platform_fee_percent=project.default_platform_fee_percent,
                     daily_provider_cost=percent_of(evaluation.daily_amount, provider.provider_fee_percent),
                     daily_platform_revenue=percent_of(evaluation.daily_amount, project.default_platform_fee_percent),
-                    daily_profit=percent_of(evaluation.daily_amount, project.default_platform_fee_percent - provider.provider_fee_percent),
+                    daily_profit=commission_margin(
+                        evaluation.daily_amount,
+                        project.default_platform_fee_percent,
+                        provider.provider_fee_percent,
+                    ),
                     weekly_provider_cost=percent_of(evaluation.weekly_amount, provider.provider_fee_percent),
                     weekly_platform_revenue=percent_of(evaluation.weekly_amount, project.default_platform_fee_percent),
-                    weekly_profit=percent_of(evaluation.weekly_amount, project.default_platform_fee_percent - provider.provider_fee_percent),
+                    weekly_profit=commission_margin(
+                        evaluation.weekly_amount,
+                        project.default_platform_fee_percent,
+                        provider.provider_fee_percent,
+                    ),
                 ))
             result.append(ProjectRoutingAnalytics(
                 project=project,

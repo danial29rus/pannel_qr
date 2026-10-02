@@ -44,7 +44,7 @@ class ProjectCreate(BaseModel):
     owner_id: uuid.UUID
     name: str = Field(min_length=1, max_length=200)
     external_key: str = Field(min_length=3, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
-    default_platform_fee_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=7, decimal_places=4)
+    default_platform_fee_percent: Decimal = Field(default=Decimal("13"), ge=0, le=100, max_digits=7, decimal_places=4)
 
 
 class ProjectRead(ORMModel):

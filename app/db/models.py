@@ -64,7 +64,7 @@ class Project(Base):
     # Mark-up charged by this project/platform. Provider cost lives on the
     # concrete provider connection; the difference is the projected profit.
     default_platform_fee_percent: Mapped[Decimal] = mapped_column(
-        Numeric(7, 4), default=Decimal("0"), server_default="0"
+        Numeric(7, 4), default=Decimal("13"), server_default="13"
     )
     external_callback_url: Mapped[str | None] = mapped_column(Text)
     # Write-only secrets. They are never included in API responses.
