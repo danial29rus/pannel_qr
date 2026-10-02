@@ -36,7 +36,7 @@ class UserDAO:
         return list((await session.scalars(select(User).order_by(User.registered_at.desc()))).all())
 
     @staticmethod
-    async def page(session: AsyncSession, page: int, page_size: int, query: str | None = None) -> tuple[list[User], int]:
+    async def page(session: AsyncSession, page: int, page_size: int, query: str | None = None) -> tuple[Sequence[User], int]:
         statement = select(User)
         count_statement = select(func.count()).select_from(User)
         if query:
