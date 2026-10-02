@@ -13,6 +13,15 @@ import app.services.orders as orders_service
 import app.payments.service as payments_service
 
 
+def test_merchant_qr_accepts_disabled_auto_amount_selection():
+    payload = MerchantQrPaymentCreate(
+        amount=Decimal("100"), currency="RUB", merchant_transaction_id="merchant-qr-auto-off",
+        auto_amount_step=1, auto_amount_limit=0,
+    )
+
+    assert payload.auto_amount_limit == 0
+
+
 @pytest.mark.asyncio
 async def test_external_order_closes_read_transaction_before_creating_payment(monkeypatch):
     session = SimpleNamespace(rollback=AsyncMock())

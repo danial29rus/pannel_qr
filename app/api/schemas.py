@@ -415,7 +415,9 @@ class MerchantQrPaymentCreate(BaseModel):
     currency: str = Field(min_length=3, max_length=8)
     merchant_transaction_id: str = Field(min_length=1, max_length=128)
     auto_amount_step: int | None = Field(default=None, ge=1)
-    auto_amount_limit: int | None = Field(default=None, ge=1, le=20)
+    # PayGateCore sends 0 when automatic amount selection is explicitly
+    # disabled. Positive values are the number of permitted selection steps.
+    auto_amount_limit: int | None = Field(default=None, ge=0, le=20)
     currency_rate: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=8)
     webhook_url: str | None = Field(default=None, max_length=2048, pattern=r"^https://")
     return_url: str | None = Field(default=None, max_length=2048, pattern=r"^https?://")
