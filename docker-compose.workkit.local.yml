@@ -1,0 +1,6 @@
+# Local-only override. Mounts the WorkKit folder read-only; it never exposes or writes its SQLite file.
+# Start with: docker compose -f docker-compose.yml -f docker-compose.workkit.local.yml up --build
+services:
+  api:
+    volumes:
+      - /Users/dshpeka/Downloads/workkit-market-final/backend:/catalogs/workkit-market:ro

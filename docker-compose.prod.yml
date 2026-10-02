@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    restart: "no"
+    environment: &api_env
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      API_PREFIX: /api/v1
+      CORS_ORIGINS: https://${PANEL_DOMAIN}
+      ENFORCE_AUTH: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN}
+      VIEWER_TOKEN: ${VIEWER_TOKEN}
+      PANEL_ADMIN_USERNAME: ${PANEL_ADMIN_USERNAME}
+      PANEL_ADMIN_PASSWORD_HASH: ${PANEL_ADMIN_PASSWORD_HASH}
+      PANEL_SESSION_SECRET: ${PANEL_SESSION_SECRET}
+      RUN_RECONCILIATION_WORKER: "false"
+      RECONCILIATION_POLL_SECONDS: "10"
+      SMTP_ENABLED: "false"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *api_env
+      RUN_RECONCILIATION_WORKER: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "18080"
+
+  worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *api_env
+      RUN_RECONCILIATION_WORKER: "false"
+    command: ["python", "-m", "app.jobs.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

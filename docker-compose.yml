@@ -1,0 +1,60 @@
+services:
+  api:
+    build: .
+    environment:
+      APP_NAME: ${APP_NAME:-Payments Control Panel}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://panel:panel@db:5432/panel}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:15173}
+      ENFORCE_AUTH: ${ENFORCE_AUTH:-false}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
+      VIEWER_TOKEN: ${VIEWER_TOKEN:-}
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-support@panel.localhost}
+      SMTP_ALLOWED_RECIPIENT_DOMAINS: ${SMTP_ALLOWED_RECIPIENT_DOMAINS:-clients.localhost,gmail.localhost,yandex.localhost,outlook.localhost,mail.localhost,company.localhost}
+    ports:
+      - "127.0.0.1:18080:18080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 18080 --reload"
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: panel
+      POSTGRES_USER: panel
+      POSTGRES_PASSWORD: panel
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U panel -d panel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "127.0.0.1:15173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+  mailpit:
+    image: axllent/mailpit:v1.23
+    ports:
+      - "127.0.0.1:11025:1025"
+      - "127.0.0.1:18025:8025"
+
+volumes:
+  postgres_data:
