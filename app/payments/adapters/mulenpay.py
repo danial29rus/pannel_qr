@@ -34,6 +34,31 @@ class MulenPayAdapter:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     @staticmethod
+    def _sbp_url(payload: dict) -> str | None:
+        """Return the direct NSPK QR URL only when MulenPay explicitly provides it."""
+        candidate = payload.get("data", {}).get("qrpayload")
+        if isinstance(candidate, str) and candidate.startswith("https://qr.nspk.ru/"):
+            return candidate
+        return None
+
+    async def _get_sbp_url(self, hosted_payment_url: str) -> tuple[str | None, dict | None]:
+        """Best-effort lookup of the direct SBP QR behind MulenPay's hosted page.
+
+        The hosted checkout remains a valid fallback: a payment has already
+        been created successfully, so a transient QR lookup error must not
+        turn that successful creation into a failed merchant request.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(f"{hosted_payment_url.rstrip('/')}/sbp")
+            if response.status_code >= 400:
+                return None, {"status_code": response.status_code, "body": response.text[:1000]}
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return None, {"error": str(exc)}
+        return self._sbp_url(payload), payload
+
+    @staticmethod
     def _state(value: int | str) -> TransactionState:
         return {0: TransactionState.created, 1: TransactionState.processing, 2: TransactionState.cancelled,
                 3: TransactionState.succeeded, 4: TransactionState.failed, 5: TransactionState.pending, 6: TransactionState.pending}.get(int(value), TransactionState.pending)
@@ -53,7 +78,22 @@ class MulenPayAdapter:
         except httpx.RequestError as exc: raise RetryableProviderError(str(exc)) from exc
         if response.status_code in (408, 429) or response.status_code >= 500: raise RetryableProviderError(response.text, response.status_code)
         response.raise_for_status(); data = response.json()
-        return ProviderPayment(external_id=str(data["id"]), state=TransactionState.pending, amount=request.amount, currency=request.currency, payload={"payment_url": data.get("paymentUrl"), "provider": data})
+        hosted_payment_url = data.get("paymentUrl")
+        sbp_url = None
+        sbp_payload = None
+        if isinstance(hosted_payment_url, str) and hosted_payment_url.startswith("https://"):
+            sbp_url, sbp_payload = await self._get_sbp_url(hosted_payment_url)
+        return ProviderPayment(
+            external_id=str(data["id"]), state=TransactionState.pending,
+            amount=request.amount, currency=request.currency,
+            payload={
+                "payment_url": sbp_url or hosted_payment_url,
+                "hosted_payment_url": hosted_payment_url,
+                "sbp_payment_url": sbp_url,
+                "provider": data,
+                "sbp": sbp_payload,
+            },
+        )
 
     async def get_payment(self, external_id: str) -> ProviderPayment:
         try:
