@@ -207,6 +207,10 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
     if not payload.description:
         payload = payload.model_copy(update={"description": f"Покупка в магазине {project.external_key}"})
     try:
+        # Authentication resolved the project with a read query above. Finish
+        # that scope here so the payment service can own one explicit write
+        # transaction without a hidden rollback in its business method.
+        await session.rollback()
         transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
         response = MerchantQrPaymentResponse(
             id=transaction.id,

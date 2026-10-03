@@ -173,6 +173,27 @@ class PaymentService:
     """Application service. It owns payment rules; DAOs only perform persistence."""
 
     @staticmethod
+    def _merchant_qr_transaction_payload(
+        project_id, buyer_id, payload: MerchantQrPaymentCreate,
+    ) -> TransactionCreate:
+        """Translate the merchant contract into the internal payment command."""
+        return TransactionCreate(
+            project_id=project_id,
+            user_id=buyer_id,
+            amount=payload.amount,
+            currency=payload.currency,
+            description=payload.description or f"QR payment {payload.merchant_transaction_id}",
+            extra={
+                "merchant_transaction_id": payload.merchant_transaction_id,
+                "merchant_webhook_url": payload.webhook_url,
+                "website_url": payload.return_url,
+                "auto_amount_step": payload.auto_amount_step,
+                "auto_amount_limit": payload.auto_amount_limit,
+                "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
+            },
+        )
+
+    @staticmethod
     async def create(session: AsyncSession, payload: TransactionCreate, idempotency_key: str) -> Transaction:
         async with session.begin():
             transaction = await create_transaction(session, payload, idempotency_key)
@@ -183,42 +204,30 @@ class PaymentService:
     async def create_merchant_qr_payment(
         session: AsyncSession, project_id, payload: MerchantQrPaymentCreate,
     ) -> Transaction:
-        """Create a QR payment using a random email-bearing buyer from the pool."""
+        """Create or return an idempotent merchant QR payment.
+
+        The caller enters this method with no active transaction.  Buyer
+        selection and the payment creation run in one explicit write scope;
+        this keeps the random buyer, routing limits and idempotency decision
+        together and avoids service-layer rollbacks.
+        """
         idempotency_key = f"merchant-qr:{payload.merchant_transaction_id}"
-        existing = await TransactionDAO.get_by_idempotency(session, project_id, idempotency_key)
-        if existing:
-            return existing
-
-        buyer = await UserDAO.random_active_with_email(session)
-        if not buyer:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No active buyer with an email is available in the user pool",
-            )
-        buyer_id = buyer.id
-
-        # The duplicate check and random selection opened an implicit read
-        # transaction. PaymentService.create owns the write transaction.
-        await session.rollback()
-        return await PaymentService.create(
-            session,
-            TransactionCreate(
-                project_id=project_id,
-                user_id=buyer_id,
-                amount=payload.amount,
-                currency=payload.currency,
-                description=payload.description or f"QR payment {payload.merchant_transaction_id}",
-                extra={
-                    "merchant_transaction_id": payload.merchant_transaction_id,
-                    "merchant_webhook_url": payload.webhook_url,
-                    "website_url": payload.return_url,
-                    "auto_amount_step": payload.auto_amount_step,
-                    "auto_amount_limit": payload.auto_amount_limit,
-                    "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
-                },
-            ),
-            idempotency_key,
-        )
+        async with session.begin():
+            transaction = await TransactionDAO.get_by_idempotency(session, project_id, idempotency_key)
+            if not transaction:
+                buyer = await UserDAO.random_active_with_email(session)
+                if not buyer:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="No active buyer with an email is available in the user pool",
+                    )
+                transaction = await create_transaction(
+                    session,
+                    PaymentService._merchant_qr_transaction_payload(project_id, buyer.id, payload),
+                    idempotency_key,
+                )
+        await session.refresh(transaction)
+        return transaction
 
     @staticmethod
     async def process_webhook(session: AsyncSession, provider_code: str, body: bytes, headers: dict[str, str]) -> None:
