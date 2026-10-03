@@ -434,6 +434,9 @@ class MerchantQrPaymentCreate(BaseModel):
     # PayGateCore sends 0 when automatic amount selection is explicitly
     # disabled. Positive values are the number of permitted selection steps.
     auto_amount_limit: int | None = Field(default=None, ge=0, le=20)
+    # Optional MulenPay experiment. The value is forwarded as `holdTime`; its
+    # provider-side meaning must be verified before using it in production.
+    hold_time_seconds: int | None = Field(default=None, ge=1, le=86_400)
     currency_rate: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=8)
     webhook_url: str | None = Field(default=None, max_length=2048, pattern=r"^https://")
     return_url: str | None = Field(default=None, max_length=2048, pattern=r"^https?://")

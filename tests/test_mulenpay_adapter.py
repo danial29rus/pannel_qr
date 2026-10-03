@@ -88,9 +88,11 @@ async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monk
 
     class PaymentClient(FakeClient):
         requested_urls = []
+        requested_json = None
 
         async def post(self, url, **kwargs):
             type(self).requested_urls.append(url)
+            type(self).requested_json = kwargs["json"]
             return FakeResponse({"id": 42, "paymentUrl": hosted_url})
 
         async def get(self, url, **kwargs):
@@ -105,10 +107,11 @@ async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monk
 
     payment = await adapter().create_payment(CreatePaymentRequest(
         reference="merchant-order-1", amount=Decimal("10"), currency="RUB",
-        direction=TransactionDirection.incoming, description="Test", extra={}, customer_email="buyer@example.com",
+        direction=TransactionDirection.incoming, description="Test", extra={"hold_time_seconds": 900}, customer_email="buyer@example.com",
     ))
 
     assert PaymentClient.requested_urls == ["https://api.mulenpay.com/api/v2/payments", f"{hosted_url}/sbp"]
+    assert PaymentClient.requested_json["holdTime"] == 900
     assert payment.payload["payment_url"] == "https://qr.nspk.ru/TEST-DIRECT-QR"
     assert payment.payload["hosted_payment_url"] == hosted_url
     assert payment.payload["sbp_payment_url"] == "https://qr.nspk.ru/TEST-DIRECT-QR"

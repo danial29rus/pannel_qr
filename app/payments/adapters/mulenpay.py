@@ -71,6 +71,9 @@ class MulenPayAdapter:
                 "description": request.description or f"Заказ {request.reference}", "items": request.extra.get("items", []),
                 "website_url": request.extra.get("website_url"), "language": request.extra.get("language", "ru"),
                 "client": request.customer_email}
+        hold_time_seconds = request.extra.get("hold_time_seconds")
+        if hold_time_seconds is not None:
+            body["holdTime"] = int(hold_time_seconds)
         body["sign"] = hashlib.sha1(f"{currency}{amount}{self.shop_id}{request.reference}{self.secret_key}".encode()).hexdigest()
         try:
             async with httpx.AsyncClient(timeout=15) as client:

@@ -86,6 +86,7 @@ async def test_merchant_qr_uses_random_email_buyer(monkeypatch):
     assert payload.user_id == buyer_id
     assert payload.description == "QR payment merchant-qr-1"
     assert payload.extra["merchant_transaction_id"] == "merchant-qr-1"
+    assert payload.extra["hold_time_seconds"] is None
     assert create.await_args.args[2] == "merchant-qr:merchant-qr-1"
 
 

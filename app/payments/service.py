@@ -133,7 +133,21 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
     for attempt in range(1, max_attempts + 1):
         try:
             provider_payment = await adapter.create_payment(request)
-            await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="success", request_payload={"reference": request.reference, "amount": str(request.amount), "currency": request.currency}, response_payload=provider_payment.payload, http_status=201, error=None))
+            await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
+                transaction_id=transaction.id,
+                operation="create_payment",
+                attempt=attempt,
+                outcome="success",
+                request_payload={
+                    "reference": request.reference,
+                    "amount": str(request.amount),
+                    "currency": request.currency,
+                    "hold_time_seconds": request.extra.get("hold_time_seconds"),
+                },
+                response_payload=provider_payment.payload,
+                http_status=201,
+                error=None,
+            ))
             break
         except RetryableProviderError as exc:
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="retryable_error", request_payload={"reference": request.reference}, response_payload=None, http_status=exc.status_code, error=str(exc)))
@@ -189,6 +203,7 @@ class PaymentService:
                 "website_url": payload.return_url,
                 "auto_amount_step": payload.auto_amount_step,
                 "auto_amount_limit": payload.auto_amount_limit,
+                "hold_time_seconds": payload.hold_time_seconds,
                 "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
             },
         )
