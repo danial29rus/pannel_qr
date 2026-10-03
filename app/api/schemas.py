@@ -171,6 +171,9 @@ class ProviderRouteCreate(BaseModel):
     weekly_amount_limit: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
     daily_transactions_limit: int | None = Field(default=None, gt=0)
     weekly_transactions_limit: int | None = Field(default=None, gt=0)
+    max_transactions_10m: int | None = Field(default=None, gt=0)
+    max_transactions_hour: int | None = Field(default=None, gt=0)
+    max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None
     is_active: bool = True
@@ -194,6 +197,9 @@ class ProviderRouteUpdate(BaseModel):
     weekly_amount_limit: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
     daily_transactions_limit: int | None = Field(default=None, gt=0)
     weekly_transactions_limit: int | None = Field(default=None, gt=0)
+    max_transactions_10m: int | None = Field(default=None, gt=0)
+    max_transactions_hour: int | None = Field(default=None, gt=0)
+    max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None
     is_active: bool = True
@@ -210,6 +216,9 @@ class ProviderRouteAnalytics(ProviderRouteRead):
     weekly_used_amount: Decimal
     daily_used_transactions: int
     weekly_used_transactions: int
+    ten_minute_used_transactions: int
+    hourly_used_transactions: int
+    pending_transactions: int
     is_available: bool
     unavailable_reason: str | None = None
     provider_fee_percent: Decimal
@@ -242,8 +251,10 @@ class LimitRead(ORMModel):
 
 
 class OperationalPolicyUpsert(BaseModel):
+    max_transactions_10m: int = Field(default=15, ge=1, le=100_000)
     max_transactions_hour: int = Field(default=30, ge=1, le=100_000)
     max_transactions_day: int = Field(default=300, ge=1, le=1_000_000)
+    max_pending_transactions: int = Field(default=50, ge=1, le=1_000_000)
     daily_amount_limit: Decimal = Field(default=Decimal("100000"), gt=0, max_digits=20, decimal_places=4)
     cooldown_minutes: int = Field(default=0, ge=0, description="0 disables the pause; otherwise a project-selected number of minutes")
     is_active: bool = True
@@ -476,3 +487,6 @@ class DashboardSummary(BaseModel):
     settlement_margin: Decimal
     payment_count: int
     success_count: int
+    pending_count: int
+    failed_count: int
+    terminal_count: int

@@ -143,8 +143,12 @@ class ProjectOperationalPolicy(Base):
     amount_min: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("1000"))
     amount_max: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("7000"))
     max_transactions_15m: Mapped[int] = mapped_column(default=15)
+    # Rolling request-rate and queue limits. These protect payment creation;
+    # completed-payment analytics remains based on succeeded transactions.
+    max_transactions_10m: Mapped[int] = mapped_column(default=15, server_default="15")
     max_transactions_hour: Mapped[int] = mapped_column(default=30)
     max_transactions_day: Mapped[int] = mapped_column(default=300, server_default="300")
+    max_pending_transactions: Mapped[int] = mapped_column(default=50, server_default="50")
     daily_amount_limit: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("100000"), server_default="100000")
     # 0 means that the project does not impose a pause between payments.
     cooldown_minutes: Mapped[int] = mapped_column(default=0, server_default="0")
@@ -173,6 +177,9 @@ class ProjectProviderRoute(Base):
     weekly_amount_limit: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))
     daily_transactions_limit: Mapped[int | None] = mapped_column()
     weekly_transactions_limit: Mapped[int | None] = mapped_column()
+    max_transactions_10m: Mapped[int | None] = mapped_column()
+    max_transactions_hour: Mapped[int | None] = mapped_column()
+    max_pending_transactions: Mapped[int | None] = mapped_column()
     available_from: Mapped[time | None] = mapped_column()
     available_to: Mapped[time | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

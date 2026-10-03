@@ -325,10 +325,30 @@ class TransactionDAO:
         return Decimal(total)
 
     @staticmethod
-    async def count_created_since(session: AsyncSession, project_id: uuid.UUID, since: datetime) -> int:
-        return int(await session.scalar(select(func.count(Transaction.id)).where(
-            Transaction.project_id == project_id, Transaction.created_at >= since,
-        )) or 0)
+    async def count_created_since(
+        session: AsyncSession, project_id: uuid.UUID, since: datetime, provider_id: uuid.UUID | None = None,
+    ) -> int:
+        """Count accepted creation attempts in a rolling window.
+
+        This deliberately includes every state: a failed request was still an
+        accepted request and must not be usable for bypassing velocity limits.
+        """
+        filters = [Transaction.project_id == project_id, Transaction.created_at >= since]
+        if provider_id is not None:
+            filters.append(Transaction.provider_id == provider_id)
+        return int(await session.scalar(select(func.count(Transaction.id)).where(*filters)) or 0)
+
+    @staticmethod
+    async def count_pending(
+        session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID | None = None,
+    ) -> int:
+        filters = [
+            Transaction.project_id == project_id,
+            Transaction.state.in_((TransactionState.created, TransactionState.pending, TransactionState.processing)),
+        ]
+        if provider_id is not None:
+            filters.append(Transaction.provider_id == provider_id)
+        return int(await session.scalar(select(func.count(Transaction.id)).where(*filters)) or 0)
 
     @staticmethod
     async def latest_created_at(session: AsyncSession, project_id: uuid.UUID) -> datetime | None:
@@ -350,17 +370,23 @@ class TransactionDAO:
     @staticmethod
     async def dashboard_totals(
         session: AsyncSession, project_id: uuid.UUID, currency: str, start: datetime, end: datetime,
-    ) -> tuple[Decimal, Decimal, Decimal, int, int]:
+    ) -> tuple[Decimal, Decimal, Decimal, int, int, int, int, int]:
+        succeeded = Transaction.state == TransactionState.succeeded
+        pending = Transaction.state.in_((TransactionState.created, TransactionState.pending, TransactionState.processing))
+        failed = Transaction.state.in_((TransactionState.failed, TransactionState.cancelled, TransactionState.refunded))
         statement = select(
-            func.coalesce(func.sum(Transaction.amount), 0),
-            func.coalesce(func.sum(Transaction.settled_amount), 0),
-            func.coalesce(func.sum(Transaction.settled_amount - Transaction.fee_amount), 0),
+            func.coalesce(func.sum(Transaction.amount).filter(succeeded), 0),
+            func.coalesce(func.sum(func.coalesce(Transaction.settled_amount, Transaction.amount)).filter(succeeded), 0),
+            func.coalesce(func.sum(func.coalesce(Transaction.settled_amount, Transaction.amount) - Transaction.fee_amount).filter(succeeded), 0),
             func.count(Transaction.id),
-            func.count(Transaction.id).filter(Transaction.state == TransactionState.succeeded),
+            func.count(Transaction.id).filter(succeeded),
+            func.count(Transaction.id).filter(pending),
+            func.count(Transaction.id).filter(failed),
+            func.count(Transaction.id).filter(succeeded | failed),
         ).where(Transaction.project_id == project_id, Transaction.currency == currency,
                 Transaction.created_at >= start, Transaction.created_at <= end)
-        paid, credited, margin, count, success_count = (await session.execute(statement)).one()
-        return Decimal(paid), Decimal(credited), Decimal(margin), count, success_count
+        paid, credited, margin, count, success_count, pending_count, failed_count, terminal_count = (await session.execute(statement)).one()
+        return Decimal(paid), Decimal(credited), Decimal(margin), count, success_count, pending_count, failed_count, terminal_count
 
 
 class TransactionEventDAO:

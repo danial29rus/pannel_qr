@@ -43,6 +43,9 @@ class OperationalPolicyService:
         if not policy or not policy.is_active:
             return
         now = datetime.now(UTC)
+        in_10m = await TransactionDAO.count_created_since(session, payload.project_id, now - timedelta(minutes=10))
+        if in_10m >= policy.max_transactions_10m:
+            raise HTTPException(status_code=429, detail={"code": "frequency_limit_10m", "limit": policy.max_transactions_10m})
         in_hour = await TransactionDAO.count_created_since(session, payload.project_id, now - timedelta(hours=1))
         if in_hour >= policy.max_transactions_hour:
             raise HTTPException(status_code=429, detail={"code": "frequency_limit_hour", "limit": policy.max_transactions_hour})
@@ -51,8 +54,11 @@ class OperationalPolicyService:
         in_day = await TransactionDAO.count_created_since(session, payload.project_id, day_start)
         if in_day >= policy.max_transactions_day:
             raise HTTPException(status_code=429, detail={"code": "frequency_limit_day", "limit": policy.max_transactions_day, "timezone": "Europe/Moscow"})
+        pending = await TransactionDAO.count_pending(session, payload.project_id)
+        if pending >= policy.max_pending_transactions:
+            raise HTTPException(status_code=429, detail={"code": "pending_queue_limit", "limit": policy.max_pending_transactions, "pending": pending})
         used_amount = await TransactionDAO.amount_used(session, payload.project_id, payload.direction, payload.currency.upper(), day_start, (
-            TransactionState.created, TransactionState.pending, TransactionState.processing, TransactionState.succeeded,
+            TransactionState.succeeded,
         ))
         if used_amount + payload.amount > policy.daily_amount_limit:
             raise HTTPException(status_code=422, detail={"code": "daily_amount_limit", "limit": str(policy.daily_amount_limit), "used": str(used_amount), "timezone": "Europe/Moscow"})
