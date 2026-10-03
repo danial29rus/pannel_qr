@@ -199,18 +199,18 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
     """PayGateCore-compatible merchant endpoint: no buyer or product in the body."""
     authorization = request.headers.get("authorization", "")
     token = authorization[7:] if authorization.lower().startswith("bearer ") else None
-    project = await ExternalPlatformService.project_for_token(session, token)
-    project_id = project.id
-    expiry_minutes = project.payment_expiry_minutes
-    project_rate = project.default_platform_fee_percent
+    # Keep authentication in its own completed read scope. The payment service
+    # below then starts and owns the only write transaction for the payment.
+    async with session.begin():
+        project = await ExternalPlatformService.project_for_token(session, token)
+        project_id = project.id
+        expiry_minutes = project.payment_expiry_minutes
+        project_rate = project.default_platform_fee_percent
+        default_description = f"Покупка в магазине {project.external_key}"
     request_payload = payload.model_dump(mode="json")
     if not payload.description:
-        payload = payload.model_copy(update={"description": f"Покупка в магазине {project.external_key}"})
+        payload = payload.model_copy(update={"description": default_description})
     try:
-        # Authentication resolved the project with a read query above. Finish
-        # that scope here so the payment service can own one explicit write
-        # transaction without a hidden rollback in its business method.
-        await session.rollback()
         transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
         response = MerchantQrPaymentResponse(
             id=transaction.id,
