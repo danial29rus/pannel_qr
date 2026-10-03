@@ -229,6 +229,11 @@ class ProviderRouteAnalytics(ProviderRouteRead):
     weekly_provider_cost: Decimal
     weekly_platform_revenue: Decimal
     weekly_profit: Decimal
+    all_time_used_amount: Decimal
+    all_time_used_transactions: int
+    all_time_provider_cost: Decimal
+    all_time_platform_revenue: Decimal
+    all_time_profit: Decimal
 
 
 class LimitCreate(BaseModel):

@@ -49,7 +49,57 @@ function Payments() {
 function Transaction({ item, open, onOpen, trace, loading }) { const label = stateLabel[item.state] || item.state; return <><button className={`table transaction-row ${open ? "selected" : ""}`} onClick={onOpen}><span><b>{item.external_id || item.external_order_id || item.id.slice(0, 13)}</b><small>{item.provider_name} · {item.order_reference || item.description || "прямой платёж"}</small></span><span>{money(item.amount)} {item.currency}</span><span><i className={`tag ${item.state}`}>{label}</i></span><span>{timeLabel(item.created_at)} <small className="open-trace">{open ? "Скрыть маршрут" : "Открыть маршрут"}</small></span></button>{open && <PaymentTrace trace={trace} loading={loading}/>}</>; }
 function PaymentTrace({ trace, loading }) { if (loading) return <div className="payment-trace loading-trace">Загружаем техническую историю платежа…</div>; if (!trace) return <div className="payment-trace loading-trace">Не удалось загрузить историю.</div>; return <div className="payment-trace"><div className="trace-summary"><span><small>ПЛАТЁЖКА</small><b>{trace.payment.provider_name}</b><em>{trace.payment.provider_code}</em></span><span><small>ЗАЯВКА MATISON</small><b>{trace.payment.merchant_transaction_id || trace.payment.external_order_id || "Не внешний заказ"}</b><em>{trace.payment.merchant_transaction_id ? "merchant_transaction_id" : trace.payment.order_reference || "—"}</em></span><span><small>ПОЛЬЗОВАТЕЛЬ MULEN</small><b>{trace.customer?.full_name || "Не выбран"}</b><em>{trace.customer?.email || "—"}</em></span><span><small>ОПИСАНИЕ</small><b>{trace.payment.description || "—"}</b><em>{trace.payment.user_id || "—"}</em></span><span><small>ТЕКУЩИЙ СТАТУС</small><b>{stateLabel[trace.payment.state] || trace.payment.state}</b><em>{trace.payment.external_id || "ID провайдера ещё не получен"}</em></span></div><div className="trace-line">{trace.timeline.length ? trace.timeline.map((step, index) => <article className={`trace-step ${step.outcome && step.outcome !== "success" ? "trace-error" : ""}`} key={step.id}><i>{index + 1}</i><div><b>{step.title}</b><p>{timeLabel(step.created_at)}{step.attempt ? ` · попытка ${step.attempt}` : ""}{step.http_status ? ` · HTTP ${step.http_status}` : ""}{step.state ? ` · ${stateLabel[step.previous_state] || step.previous_state || "—"} → ${stateLabel[step.state] || step.state}` : ""}</p>{step.error && <strong>{step.error}</strong>}{step.payload && <details><summary>Технические данные запроса и ответа</summary><pre>{json(step.payload)}</pre></details>}</div><em>{step.outcome === "success" ? "OK" : step.outcome || "событие"}</em></article>) : <Empty text="Для этого платежа пока есть только карточка, без событий."/>}</div></div>; }
 
-function Limits() { const { projectId, notice } = usePanel(); const [policy, setPolicy] = useState(null); const [form, setForm] = useState(null); useEffect(() => { if (!projectId) return setPolicy(null); api(`/projects/${projectId}/operational-policy`).then(p => { setPolicy(p); setForm(p); }).catch(e => notice(e.message)); }, [projectId]); const save = async e => { e.preventDefault(); try { const result = await api(`/projects/${projectId}/operational-policy`, { method:"PUT", body:JSON.stringify({ ...form, max_transactions_10m:Number(form.max_transactions_10m), max_transactions_hour:Number(form.max_transactions_hour), max_transactions_day:Number(form.max_transactions_day), max_pending_transactions:Number(form.max_pending_transactions), daily_amount_limit:Number(form.daily_amount_limit), cooldown_minutes:Number(form.cooldown_minutes) }) }); setPolicy(result); setForm(result); notice("Лимиты сохранены"); } catch (e) { notice(e.message); } }; if (!policy || !form) return <section><PageHeader title="Лимиты и время" text="Настройки проверяются перед каждым платежом."/><Empty/></section>; const set = key => e => setForm({ ...form, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }); return <section><PageHeader title="Лимиты и время" text="Общие правила проекта: скорость создания, очередь и успешные платежи." action={<span className="secure">✓ server-side guard</span>}/><div className="limit-grid"><article className="card policy"><CardTitle title="Лимиты проекта" text="Частота считает принятые заявки; оборот — только успешно оплаченные."/><form onSubmit={save}><div className="inputs"><Field label="Заявок за 10 минут" value={form.max_transactions_10m} onChange={set("max_transactions_10m")} hint="Скользящие 10 минут"/><Field label="Заявок за час" value={form.max_transactions_hour} onChange={set("max_transactions_hour")} hint="Скользящий час"/><Field label="Заявок за день" value={form.max_transactions_day} onChange={set("max_transactions_day")} hint="Календарный день по Москве"/><Field label="Одновременно в ожидании" value={form.max_pending_transactions} onChange={set("max_pending_transactions")} hint="created, pending и processing"/><Field label="Сумма успешных за день" value={form.daily_amount_limit} onChange={set("daily_amount_limit")} hint="Не включает ожидающие и ошибки"/><label>Интервал между заявками, минут<input type="number" min="0" max="1440" value={form.cooldown_minutes} onChange={set("cooldown_minutes")}/><small>0 — паузы нет.</small></label></div><label className="toggle"><input type="checkbox" checked={form.is_active} onChange={set("is_active")}/><i/>Применять лимиты к новым платежам</label><div className="submit-row"><small>Лимиты не меняют уже созданные заказы.</small><button className="primary">Сохранить</button></div></form></article><article className="card"><CardTitle title="Как считаются показатели" text="Очередь и финансовая статистика не смешиваются."/><Status ok={form.is_active} title="Скорость" detail={`${form.max_transactions_10m}/10 мин · ${form.max_transactions_hour}/час`} state="Заявки"/><Status ok={form.is_active} title="Очередь" detail={`до ${form.max_pending_transactions} одновременно`} state="Ожидание"/><Status ok={form.is_active} title="Оборот" detail={`${form.daily_amount_limit} в валюте платежа`} state="Только успешно"/><Status ok={form.is_active} title="Пауза" detail={form.cooldown_minutes ? `${form.cooldown_minutes} мин.` : "без паузы"} state="Интервал"/></article></div></section>; }
+function Limits() {
+  const { projectId, notice } = usePanel();
+  const [policy, setPolicy] = useState(null);
+  const [form, setForm] = useState(null);
+  useEffect(() => {
+    if (!projectId) return setPolicy(null);
+    api(`/projects/${projectId}/operational-policy`).then(p => { setPolicy(p); setForm(p); }).catch(e => notice(e.message));
+  }, [projectId]);
+  const save = async event => {
+    event.preventDefault();
+    try {
+      const result = await api(`/projects/${projectId}/operational-policy`, {
+        method:"PUT",
+        body:JSON.stringify({
+          ...form,
+          max_transactions_10m:Number(form.max_transactions_10m),
+          max_transactions_hour:Number(form.max_transactions_hour),
+          max_transactions_day:Number(form.max_transactions_day),
+          max_pending_transactions:Number(form.max_pending_transactions),
+          daily_amount_limit:Number(form.daily_amount_limit),
+          cooldown_minutes:Number(form.cooldown_minutes),
+        }),
+      });
+      setPolicy(result); setForm(result); notice("Лимиты сохранены");
+    } catch (error) { notice(error.message); }
+  };
+  if (!policy || !form) return <section><PageHeader title="Лимиты и время" text="Настройки проверяются перед каждым платежом."/><Empty/></section>;
+  const set = key => event => setForm({ ...form, [key]: event.target.type === "checkbox" ? event.target.checked : event.target.value });
+  return <section>
+    <PageHeader title="Лимиты и время" text="Успешные оплаты расходуют лимиты; открытые заявки контролируются отдельной очередью." action={<span className="secure">✓ server-side guard</span>}/>
+    <div className="limit-grid">
+      <article className="card policy">
+        <CardTitle title="Лимиты проекта" text="Ошибки и отмены не расходуют лимиты успешных платежей."/>
+        <form onSubmit={save}><div className="inputs">
+          <Field label="Успешных за 10 минут" value={form.max_transactions_10m} onChange={set("max_transactions_10m")} hint="Скользящие 10 минут"/>
+          <Field label="Успешных за час" value={form.max_transactions_hour} onChange={set("max_transactions_hour")} hint="Скользящий час"/>
+          <Field label="Успешных за день" value={form.max_transactions_day} onChange={set("max_transactions_day")} hint="Календарный день по Москве"/>
+          <Field label="Одновременно в ожидании" value={form.max_pending_transactions} onChange={set("max_pending_transactions")} hint="created, pending и processing"/>
+          <Field label="Сумма успешных за день" value={form.daily_amount_limit} onChange={set("daily_amount_limit")} hint="Не включает ожидающие и ошибки"/>
+          <label>Интервал между успешными, минут<input type="number" min="0" max="1440" value={form.cooldown_minutes} onChange={set("cooldown_minutes")}/><small>0 — паузы нет.</small></label>
+        </div><label className="toggle"><input type="checkbox" checked={form.is_active} onChange={set("is_active")}/><i/>Применять лимиты к новым платежам</label><div className="submit-row"><small>Лимиты не меняют уже созданные заказы.</small><button className="primary">Сохранить</button></div></form>
+      </article>
+      <article className="card"><CardTitle title="Как считаются показатели" text="Очередь и успешные лимиты разделены."/>
+        <Status ok={form.is_active} title="Успешные" detail={`${form.max_transactions_10m}/10 мин · ${form.max_transactions_hour}/час · ${form.max_transactions_day}/день`} state="Лимиты"/>
+        <Status ok={form.is_active} title="Очередь" detail={`до ${form.max_pending_transactions} одновременно`} state="Ожидание"/>
+        <Status ok={form.is_active} title="Оборот" detail={`${form.daily_amount_limit} в валюте платежа`} state="Только успешно"/>
+        <Status ok={form.is_active} title="Пауза" detail={form.cooldown_minutes ? `${form.cooldown_minutes} мин.` : "без паузы"} state="После успеха"/>
+      </article>
+    </div>
+  </section>;
+}
 function Field({ label, value, onChange, hint }) { return <label>{label}<input type="number" min="0" step="0.01" value={value} onChange={onChange}/><small>{hint}</small></label>; }
 
 function Projects() {
@@ -203,9 +253,9 @@ function RouteLimitsDialog({ route, projectName, onClose, onSaved }) {
           <label>Сумма в день, ₽<input type="number" min="0.01" step="0.01" placeholder="Без лимита" value={form.daily_amount_limit} onChange={set("daily_amount_limit")}/></label>
           <label>Успешных платежей в день<input type="number" min="1" step="1" placeholder="Без лимита" value={form.daily_transactions_limit} onChange={set("daily_transactions_limit")}/></label>
           <label>Сумма в неделю, ₽<input type="number" min="0.01" step="0.01" placeholder="Без лимита" value={form.weekly_amount_limit} onChange={set("weekly_amount_limit")}/></label>
-          <label>Платежей в неделю<input type="number" min="1" step="1" placeholder="Без лимита" value={form.weekly_transactions_limit} onChange={set("weekly_transactions_limit")}/></label>
-          <label>Заявок за 10 минут<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_transactions_10m} onChange={set("max_transactions_10m")}/></label>
-          <label>Заявок за час<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_transactions_hour} onChange={set("max_transactions_hour")}/></label>
+          <label>Успешных в неделю<input type="number" min="1" step="1" placeholder="Без лимита" value={form.weekly_transactions_limit} onChange={set("weekly_transactions_limit")}/></label>
+          <label>Успешных за 10 минут<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_transactions_10m} onChange={set("max_transactions_10m")}/></label>
+          <label>Успешных за час<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_transactions_hour} onChange={set("max_transactions_hour")}/></label>
           <label>Одновременно в ожидании<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_pending_transactions} onChange={set("max_pending_transactions")}/></label>
         </div></div>
         <div className="route-form-section"><h3>Время работы</h3><div className="route-form-grid route-time-grid">
@@ -232,11 +282,40 @@ function OperationsDashboard() {
   const used = routes.reduce((sum, route) => sum + Number(route.daily_used_amount || 0), 0);
   const capacity = routes.reduce((sum, route) => sum + Number(route.daily_amount_limit || 0), 0);
   const profit = routes.reduce((sum, route) => sum + Number(route.daily_profit || 0), 0);
+  const allTimeProfit = routes.reduce((sum, route) => sum + Number(route.all_time_profit || 0), 0);
   const ready = routes.filter(route => route.is_available).length;
   if (loading) return <section><PageHeader title="Операционный центр" text="Загружаем маршруты, лимиты и загрузку…"/><Empty text="Загрузка…"/></section>;
-  return <section className="operations-page"><PageHeader title="Операционный центр" text="По каждой платёжке можно изменить лимиты, рабочее время и приоритет прямо из этой таблицы." action={<button onClick={reload}>↻ Обновить</button>}/>
-    <div className="network-kpis five"><Metric label="ПРОЕКТЫ" value={items.length} suffix="всего контуров" color="blue"/><Metric label="МАРШРУТЫ" value={active.length} suffix={`${ready} доступны сейчас`} color="green"/><Metric label="ОБОРОТ ЗА ДЕНЬ" value={money(used)} suffix="по всем маршрутам" color="violet"/><Metric label="ПРИБЫЛЬ ЗА ДЕНЬ" value={money(profit)} suffix="по текущим ставкам" color="green"/><Metric label="ДНЕВНАЯ ЁМКОСТЬ" value={capacity ? money(capacity) : "∞"} suffix="заданные лимиты" color="orange"/></div>
-    <article className="card network-board"><div className="network-board-head"><div><small>СЕТЬ ПОДКЛЮЧЕНИЙ</small><h3>Маршруты, лимиты и экономика по проектам</h3></div><span className="live-dot">● live из PostgreSQL</span></div>{items.length ? items.map(item => <div className="network-project" key={item.project.id}><div className="network-project-title"><span><b>{item.project.name}</b><small>{item.project.external_key} · площадка {item.project.default_platform_fee_percent}% · {item.project.is_active ? "проект включён" : "проект выключен"}</small></span><em>{item.provider_routes.filter(route => route.is_available).length}/{item.provider_routes.length} готовы</em></div><div className="network-grid network-head"><span>Подключение</span><span>Сумма / диапазон</span><span>День</span><span>Неделя</span><span>Экономика за день</span><span>Нагрузка</span><span>Статус</span><span>Действия</span></div>{item.provider_routes.length ? item.provider_routes.map(route => { const max = Number(route.daily_amount_limit || 0); const percent = max ? Math.min(100, Math.round(Number(route.daily_used_amount || 0) / max * 100)) : 0; return <div className="network-grid" key={route.id}><span><b>{route.provider_name}</b><small>{route.name} · вес {route.weight} · prio {route.priority}</small></span><span>{route.min_amount ?? "—"} — {route.max_amount ?? "—"}<small>окно {route.available_from && route.available_to ? `${route.available_from.slice(0,5)}—${route.available_to.slice(0,5)}` : "24/7"}</small></span><span>{money(route.daily_used_amount)} / {route.daily_amount_limit ? money(route.daily_amount_limit) : "∞"}<small>{route.daily_used_transactions} / {route.daily_transactions_limit ?? "∞"} успешных</small></span><span>{money(route.weekly_used_amount)} / {route.weekly_amount_limit ? money(route.weekly_amount_limit) : "∞"}<small>{route.weekly_used_transactions} / {route.weekly_transactions_limit ?? "∞"} успешных</small></span><span><b className={Number(route.daily_profit) >= 0 ? "profit-positive" : "profit-negative"}>{money(route.daily_profit)}</b><small>только успешные · {route.pending_transactions} ожидают</small></span><span><i className="load-bar"><i style={{ width:`${percent}%` }}/></i><small>10м {route.ten_minute_used_transactions}/{route.max_transactions_10m ?? "∞"} · час {route.hourly_used_transactions}/{route.max_transactions_hour ?? "∞"} · ждут {route.pending_transactions}/{route.max_pending_transactions ?? "∞"}</small></span><span><i className={`tag ${route.is_available ? "succeeded" : "failed"}`}>{route.is_available ? "Готов" : route.unavailable_reason || "Выключен"}</i></span><span className="network-actions"><button className="route-limits-button" onClick={() => setEditing({ route, projectName:item.project.name })}>Лимиты</button><button className="route-switch" onClick={() => toggleRoute(route)}>{route.is_active ? "Выключить" : "Включить"}</button></span></div>; }) : <Empty text="Подключений нет."/>}</div>) : <Empty text="Нет проектов для аналитики."/>}</article>
+  return <section className="operations-page">
+    <PageHeader title="Операционный центр" text="Лимиты считают успешные оплаты; незавершённые заявки защищаются отдельной очередью." action={<button onClick={reload}>↻ Обновить</button>}/>
+    <div className="network-kpis six">
+      <Metric label="ПРОЕКТЫ" value={items.length} suffix="всего контуров" color="blue"/>
+      <Metric label="МАРШРУТЫ" value={active.length} suffix={`${ready} доступны сейчас`} color="green"/>
+      <Metric label="ОБОРОТ ЗА ДЕНЬ" value={money(used)} suffix="только успешные" color="violet"/>
+      <Metric label="ПРИБЫЛЬ ЗА ДЕНЬ" value={money(profit)} suffix="только успешные" color="green"/>
+      <Metric label="ПРИБЫЛЬ ЗА ВСЁ ВРЕМЯ" value={money(allTimeProfit)} suffix="по текущим ставкам" color="blue"/>
+      <Metric label="ДНЕВНАЯ ЁМКОСТЬ" value={capacity ? money(capacity) : "∞"} suffix="заданные лимиты" color="orange"/>
+    </div>
+    <article className="card network-board">
+      <div className="network-board-head"><div><small>СЕТЬ ПОДКЛЮЧЕНИЙ</small><h3>Маршруты, лимиты и экономика по проектам</h3></div><span className="live-dot">● live из PostgreSQL</span></div>
+      {items.length ? items.map(item => <div className="network-project" key={item.project.id}>
+        <div className="network-project-title"><span><b>{item.project.name}</b><small>{item.project.external_key} · площадка {item.project.default_platform_fee_percent}% · {item.project.is_active ? "проект включён" : "проект выключен"}</small></span><em>{item.provider_routes.filter(route => route.is_available).length}/{item.provider_routes.length} готовы</em></div>
+        <div className="network-grid network-head"><span>Подключение</span><span>Сумма / диапазон</span><span>День</span><span>Неделя</span><span>Экономика</span><span>Нагрузка</span><span>Статус</span><span>Действия</span></div>
+        {item.provider_routes.length ? item.provider_routes.map(route => {
+          const max = Number(route.daily_amount_limit || 0);
+          const percent = max ? Math.min(100, Math.round(Number(route.daily_used_amount || 0) / max * 100)) : 0;
+          return <div className="network-grid" key={route.id}>
+            <span><b>{route.provider_name}</b><small>{route.name} · вес {route.weight} · prio {route.priority}</small></span>
+            <span>{route.min_amount ?? "—"} — {route.max_amount ?? "—"}<small>окно {route.available_from && route.available_to ? `${route.available_from.slice(0,5)}—${route.available_to.slice(0,5)}` : "24/7"}</small></span>
+            <span>{money(route.daily_used_amount)} / {route.daily_amount_limit ? money(route.daily_amount_limit) : "∞"}<small>{route.daily_used_transactions} / {route.daily_transactions_limit ?? "∞"} успешных</small></span>
+            <span>{money(route.weekly_used_amount)} / {route.weekly_amount_limit ? money(route.weekly_amount_limit) : "∞"}<small>{route.weekly_used_transactions} / {route.weekly_transactions_limit ?? "∞"} успешных</small></span>
+            <span><b className={Number(route.daily_profit) >= 0 ? "profit-positive" : "profit-negative"}>{money(route.daily_profit)}</b><small>за всё время: {money(route.all_time_profit)} · {route.all_time_used_transactions} успешных</small></span>
+            <span><i className="load-bar"><i style={{ width:`${percent}%` }}/></i><small>успешно: 10м {route.ten_minute_used_transactions}/{route.max_transactions_10m ?? "∞"} · час {route.hourly_used_transactions}/{route.max_transactions_hour ?? "∞"}<br/>ожидают {route.pending_transactions}/{route.max_pending_transactions ?? "∞"}</small></span>
+            <span><i className={`tag ${route.is_available ? "succeeded" : "failed"}`}>{route.is_available ? "Готов" : route.unavailable_reason || "Выключен"}</i></span>
+            <span className="network-actions"><button className="route-limits-button" onClick={() => setEditing({ route, projectName:item.project.name })}>Лимиты</button><button className="route-switch" onClick={() => toggleRoute(route)}>{route.is_active ? "Выключить" : "Включить"}</button></span>
+          </div>;
+        }) : <Empty text="Подключений нет."/>}
+      </div>) : <Empty text="Нет проектов для аналитики."/>}
+    </article>
     {editing && <RouteLimitsDialog route={editing.route} projectName={editing.projectName} onClose={() => setEditing(null)} onSaved={async error => { if (error) { notice(error); return; } await reload(); notice("Лимиты платёжки сохранены"); }}/>}
   </section>;
 }

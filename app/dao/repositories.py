@@ -325,15 +325,15 @@ class TransactionDAO:
         return Decimal(total)
 
     @staticmethod
-    async def count_created_since(
+    async def count_succeeded_since(
         session: AsyncSession, project_id: uuid.UUID, since: datetime, provider_id: uuid.UUID | None = None,
     ) -> int:
-        """Count accepted creation attempts in a rolling window.
-
-        This deliberately includes every state: a failed request was still an
-        accepted request and must not be usable for bypassing velocity limits.
-        """
-        filters = [Transaction.project_id == project_id, Transaction.created_at >= since]
+        """Count only completed successful payments in a rolling window."""
+        filters = [
+            Transaction.project_id == project_id,
+            Transaction.created_at >= since,
+            Transaction.state == TransactionState.succeeded,
+        ]
         if provider_id is not None:
             filters.append(Transaction.provider_id == provider_id)
         return int(await session.scalar(select(func.count(Transaction.id)).where(*filters)) or 0)
@@ -351,20 +351,27 @@ class TransactionDAO:
         return int(await session.scalar(select(func.count(Transaction.id)).where(*filters)) or 0)
 
     @staticmethod
-    async def latest_created_at(session: AsyncSession, project_id: uuid.UUID) -> datetime | None:
-        return await session.scalar(select(func.max(Transaction.created_at)).where(Transaction.project_id == project_id))
+    async def latest_succeeded_at(session: AsyncSession, project_id: uuid.UUID) -> datetime | None:
+        return await session.scalar(select(func.max(Transaction.created_at)).where(
+            Transaction.project_id == project_id,
+            Transaction.state == TransactionState.succeeded,
+        ))
 
     @staticmethod
     async def provider_usage(
-        session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID, since: datetime,
+        session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID, since: datetime | None,
         counted_states: tuple[TransactionState, ...],
     ) -> tuple[Decimal, int]:
+        filters = [
+            Transaction.project_id == project_id,
+            Transaction.provider_id == provider_id,
+            Transaction.state.in_(counted_states),
+        ]
+        if since is not None:
+            filters.append(Transaction.created_at >= since)
         amount, count = (await session.execute(select(
             func.coalesce(func.sum(Transaction.amount), 0), func.count(Transaction.id),
-        ).where(
-            Transaction.project_id == project_id, Transaction.provider_id == provider_id,
-            Transaction.created_at >= since, Transaction.state.in_(counted_states),
-        ))).one()
+        ).where(*filters))).one()
         return Decimal(amount), int(count)
 
     @staticmethod

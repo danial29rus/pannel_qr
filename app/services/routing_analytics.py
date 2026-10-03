@@ -1,7 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ProjectRoutingAnalytics, ProviderRouteAnalytics, ProviderRouteRead
-from app.dao.repositories import LimitDAO, OperationalPolicyDAO, ProjectDAO, ProviderDAO, ProviderRouteDAO
+from app.dao.repositories import LimitDAO, OperationalPolicyDAO, ProjectDAO, ProviderDAO, ProviderRouteDAO, TransactionDAO
+from app.db.models import TransactionState
 from app.services.routing import RoutingService
 
 
@@ -25,6 +26,9 @@ class RoutingAnalyticsService:
                 if not provider:
                     continue
                 evaluation = await RoutingService.evaluate(session, route)
+                all_time_amount, all_time_count = await TransactionDAO.provider_usage(
+                    session, route.project_id, route.provider_id, None, (TransactionState.succeeded,),
+                )
                 route_data = ProviderRouteRead.model_validate(route).model_dump()
                 route_rows.append(ProviderRouteAnalytics(
                     **route_data,
@@ -52,6 +56,15 @@ class RoutingAnalyticsService:
                     weekly_platform_revenue=percent_of(evaluation.weekly_amount, project.default_platform_fee_percent),
                     weekly_profit=commission_margin(
                         evaluation.weekly_amount,
+                        project.default_platform_fee_percent,
+                        provider.provider_fee_percent,
+                    ),
+                    all_time_used_amount=all_time_amount,
+                    all_time_used_transactions=all_time_count,
+                    all_time_provider_cost=percent_of(all_time_amount, provider.provider_fee_percent),
+                    all_time_platform_revenue=percent_of(all_time_amount, project.default_platform_fee_percent),
+                    all_time_profit=commission_margin(
+                        all_time_amount,
                         project.default_platform_fee_percent,
                         provider.provider_fee_percent,
                     ),

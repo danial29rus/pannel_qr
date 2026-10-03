@@ -107,12 +107,13 @@ class RoutingService:
     @staticmethod
     async def evaluate(session: AsyncSession, route: ProjectProviderRoute, amount: Decimal | None = None) -> RouteEvaluation:
         now = datetime.now(UTC)
-        # Financial capacity and economics only consume completed payments.
-        # Rolling velocity remains independent and counts every accepted request.
+        # All capacity limits count only completed successful payments. The
+        # pending queue below is intentionally separate and includes every
+        # unfinished payment so a route cannot be flooded with open invoices.
         daily_amount, daily_count = await TransactionDAO.provider_usage(session, route.project_id, route.provider_id, start_of_day(now), SUCCESSFUL_STATES)
         weekly_amount, weekly_count = await TransactionDAO.provider_usage(session, route.project_id, route.provider_id, start_of_week(now), SUCCESSFUL_STATES)
-        ten_minute_count = await TransactionDAO.count_created_since(session, route.project_id, now - timedelta(minutes=10), route.provider_id)
-        hourly_count = await TransactionDAO.count_created_since(session, route.project_id, now - timedelta(hours=1), route.provider_id)
+        ten_minute_count = await TransactionDAO.count_succeeded_since(session, route.project_id, now - timedelta(minutes=10), route.provider_id)
+        hourly_count = await TransactionDAO.count_succeeded_since(session, route.project_id, now - timedelta(hours=1), route.provider_id)
         pending_count = await TransactionDAO.count_pending(session, route.project_id, route.provider_id)
         # Route schedules are configured and displayed in Moscow time, the
         # same timezone used for daily and weekly limits.
@@ -125,9 +126,9 @@ class RoutingService:
         if not is_in_time_window(current_time, route.available_from, route.available_to):
             return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Сейчас вне окна работы")
         if route.max_transactions_10m is not None and ten_minute_count >= route.max_transactions_10m:
-            return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Лимит заявок за 10 минут исчерпан")
+            return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Лимит успешных платежей за 10 минут исчерпан")
         if route.max_transactions_hour is not None and hourly_count >= route.max_transactions_hour:
-            return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Лимит заявок за час исчерпан")
+            return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Лимит успешных платежей за час исчерпан")
         if route.max_pending_transactions is not None and pending_count >= route.max_pending_transactions:
             return RouteEvaluation(daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count, hourly_count, pending_count, False, "Лимит ожидающих платежей исчерпан")
         if amount is not None:

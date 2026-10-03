@@ -37,7 +37,7 @@ async def test_route_blocks_when_pending_queue_is_full(monkeypatch):
         daily_transactions_limit=None, weekly_transactions_limit=None,
     )
     monkeypatch.setattr(routing_service.TransactionDAO, "provider_usage", AsyncMock(return_value=(Decimal("0"), 0)))
-    monkeypatch.setattr(routing_service.TransactionDAO, "count_created_since", AsyncMock(side_effect=[0, 0]))
+    monkeypatch.setattr(routing_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0]))
     monkeypatch.setattr(routing_service.TransactionDAO, "count_pending", AsyncMock(return_value=2))
     monkeypatch.setattr(routing_service.ProviderDAO, "get", AsyncMock(return_value=SimpleNamespace(is_active=True)))
 
@@ -48,7 +48,7 @@ async def test_route_blocks_when_pending_queue_is_full(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ten_requests_in_five_second_intervals_hit_route_ten_minute_limit(monkeypatch):
+async def test_ten_successful_payments_in_five_second_intervals_hit_route_ten_minute_limit(monkeypatch):
     route = SimpleNamespace(
         project_id="project-1", provider_id="provider-1", is_active=True,
         available_from=None, available_to=None, max_transactions_10m=10,
@@ -57,11 +57,11 @@ async def test_ten_requests_in_five_second_intervals_hit_route_ten_minute_limit(
         daily_transactions_limit=None, weekly_transactions_limit=None,
     )
     monkeypatch.setattr(routing_service.TransactionDAO, "provider_usage", AsyncMock(return_value=(Decimal("0"), 0)))
-    monkeypatch.setattr(routing_service.TransactionDAO, "count_created_since", AsyncMock(side_effect=[10, 10]))
+    monkeypatch.setattr(routing_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[10, 10]))
     monkeypatch.setattr(routing_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
     monkeypatch.setattr(routing_service.ProviderDAO, "get", AsyncMock(return_value=SimpleNamespace(is_active=True)))
 
     result = await RoutingService.evaluate(SimpleNamespace(), route, Decimal("100"))
 
     assert not result.available
-    assert result.reason == "Лимит заявок за 10 минут исчерпан"
+    assert result.reason == "Лимит успешных платежей за 10 минут исчерпан"

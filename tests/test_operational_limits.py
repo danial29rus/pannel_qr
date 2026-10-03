@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -35,20 +36,20 @@ def payment_payload():
 @pytest.mark.asyncio
 async def test_disabled_policy_does_not_block_payment_creation(monkeypatch):
     payload = payment_payload()
-    count_requests = AsyncMock()
+    count_successes = AsyncMock()
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(is_active=False)))
-    monkeypatch.setattr(policies_service.TransactionDAO, "count_created_since", count_requests)
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", count_successes)
 
     await OperationalPolicyService.assert_allows(SimpleNamespace(), payload)
 
-    count_requests.assert_not_awaited()
+    count_successes.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_three_pending_payments_block_the_next_request(monkeypatch):
     payload = payment_payload()
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(max_pending_transactions=3)))
-    monkeypatch.setattr(policies_service.TransactionDAO, "count_created_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
     monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=3))
 
     with pytest.raises(HTTPException) as error:
@@ -80,10 +81,28 @@ async def test_daily_amount_uses_only_successful_payments(monkeypatch):
     payload = payment_payload()
     amount_used = AsyncMock(return_value=Decimal("70"))
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(daily_amount_limit=Decimal("100"))))
-    monkeypatch.setattr(policies_service.TransactionDAO, "count_created_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
     monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
     monkeypatch.setattr(policies_service.TransactionDAO, "amount_used", amount_used)
 
     await OperationalPolicyService.assert_allows(SimpleNamespace(), payload)
 
     assert amount_used.await_args.args[-1] == (TransactionState.succeeded,)
+
+
+@pytest.mark.asyncio
+async def test_cooldown_is_measured_from_the_last_successful_payment(monkeypatch):
+    payload = payment_payload()
+    latest_success = AsyncMock(return_value=datetime.now(UTC))
+    monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(cooldown_minutes=15)))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
+    monkeypatch.setattr(policies_service.TransactionDAO, "amount_used", AsyncMock(return_value=Decimal("0")))
+    monkeypatch.setattr(policies_service.TransactionDAO, "latest_succeeded_at", latest_success)
+
+    with pytest.raises(HTTPException) as error:
+        await OperationalPolicyService.assert_allows(SimpleNamespace(), payload)
+
+    assert error.value.status_code == 429
+    assert error.value.detail["code"] == "payment_cooldown"
+    latest_success.assert_awaited_once()
