@@ -259,6 +259,8 @@ class OperationalPolicyUpsert(BaseModel):
     max_transactions_10m: int = Field(default=15, ge=1, le=100_000)
     max_transactions_hour: int = Field(default=30, ge=1, le=100_000)
     max_transactions_day: int = Field(default=300, ge=1, le=1_000_000)
+    max_all_transactions_hour: int | None = Field(default=None, ge=1, le=100_000)
+    max_all_transactions_day: int | None = Field(default=None, ge=1, le=1_000_000)
     max_pending_transactions: int = Field(default=50, ge=1, le=1_000_000)
     daily_amount_limit: Decimal = Field(default=Decimal("100000"), gt=0, max_digits=20, decimal_places=4)
     cooldown_minutes: int = Field(default=0, ge=0, description="0 disables the pause; otherwise a project-selected number of minutes")

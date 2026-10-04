@@ -11,7 +11,7 @@ from app.db.models import ProjectOperationalPolicy, TransactionState
 
 
 class OperationalPolicyService:
-    """Business guards for successful-payment limits and the pending queue."""
+    """Business guards for successful-payment limits, hard request caps and the pending queue."""
 
     @staticmethod
     async def get(session: AsyncSession, project_id: uuid.UUID) -> ProjectOperationalPolicy:
@@ -43,14 +43,36 @@ class OperationalPolicyService:
         if not policy or not policy.is_active:
             return
         now = datetime.now(UTC)
+        # Unlike the successful-payment limits below, these are hard anti-flood
+        # caps. A rejected/cancelled provider invoice still consumed a request
+        # and therefore counts here.
+        if policy.max_all_transactions_hour is not None:
+            all_in_hour = await TransactionDAO.count_all_created_since(
+                session, payload.project_id, now - timedelta(hours=1),
+            )
+            if all_in_hour >= policy.max_all_transactions_hour:
+                raise HTTPException(status_code=429, detail={
+                    "code": "all_transactions_limit_hour",
+                    "limit": policy.max_all_transactions_hour,
+                    "count": all_in_hour,
+                })
+        moscow = ZoneInfo("Europe/Moscow")
+        day_start = now.astimezone(moscow).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        if policy.max_all_transactions_day is not None:
+            all_in_day = await TransactionDAO.count_all_created_since(session, payload.project_id, day_start)
+            if all_in_day >= policy.max_all_transactions_day:
+                raise HTTPException(status_code=429, detail={
+                    "code": "all_transactions_limit_day",
+                    "limit": policy.max_all_transactions_day,
+                    "count": all_in_day,
+                    "timezone": "Europe/Moscow",
+                })
         in_10m = await TransactionDAO.count_succeeded_since(session, payload.project_id, now - timedelta(minutes=10))
         if in_10m >= policy.max_transactions_10m:
             raise HTTPException(status_code=429, detail={"code": "frequency_limit_10m", "limit": policy.max_transactions_10m})
         in_hour = await TransactionDAO.count_succeeded_since(session, payload.project_id, now - timedelta(hours=1))
         if in_hour >= policy.max_transactions_hour:
             raise HTTPException(status_code=429, detail={"code": "frequency_limit_hour", "limit": policy.max_transactions_hour})
-        moscow = ZoneInfo("Europe/Moscow")
-        day_start = now.astimezone(moscow).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
         in_day = await TransactionDAO.count_succeeded_since(session, payload.project_id, day_start)
         if in_day >= policy.max_transactions_day:
             raise HTTPException(status_code=429, detail={"code": "frequency_limit_day", "limit": policy.max_transactions_day, "timezone": "Europe/Moscow"})

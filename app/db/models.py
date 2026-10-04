@@ -148,6 +148,10 @@ class ProjectOperationalPolicy(Base):
     max_transactions_10m: Mapped[int] = mapped_column(default=15, server_default="15")
     max_transactions_hour: Mapped[int] = mapped_column(default=30)
     max_transactions_day: Mapped[int] = mapped_column(default=300, server_default="300")
+    # Hard request caps: every newly created payment attempt consumes these,
+    # including payments later cancelled or rejected by the provider.
+    max_all_transactions_hour: Mapped[int | None] = mapped_column()
+    max_all_transactions_day: Mapped[int | None] = mapped_column()
     max_pending_transactions: Mapped[int] = mapped_column(default=50, server_default="50")
     daily_amount_limit: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("100000"), server_default="100000")
     # 0 means that the project does not impose a pause between payments.

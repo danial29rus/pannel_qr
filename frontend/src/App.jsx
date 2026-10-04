@@ -67,6 +67,8 @@ function Limits() {
           max_transactions_10m:Number(form.max_transactions_10m),
           max_transactions_hour:Number(form.max_transactions_hour),
           max_transactions_day:Number(form.max_transactions_day),
+          max_all_transactions_hour:numberOrNull(form.max_all_transactions_hour),
+          max_all_transactions_day:numberOrNull(form.max_all_transactions_day),
           max_pending_transactions:Number(form.max_pending_transactions),
           daily_amount_limit:Number(form.daily_amount_limit),
           cooldown_minutes:Number(form.cooldown_minutes),
@@ -78,21 +80,24 @@ function Limits() {
   if (!policy || !form) return <section><PageHeader title="Лимиты и время" text="Настройки проверяются перед каждым платежом."/><Empty/></section>;
   const set = key => event => setForm({ ...form, [key]: event.target.type === "checkbox" ? event.target.checked : event.target.value });
   return <section>
-    <PageHeader title="Лимиты и время" text="Успешные оплаты расходуют лимиты; открытые заявки контролируются отдельной очередью." action={<span className="secure">✓ server-side guard</span>}/>
+    <PageHeader title="Лимиты и время" text="Успешные оплаты, все заявки и очередь контролируются раздельно." action={<span className="secure">✓ server-side guard</span>}/>
     <div className="limit-grid">
       <article className="card policy">
-        <CardTitle title="Лимиты проекта" text="Ошибки и отмены не расходуют лимиты успешных платежей."/>
+        <CardTitle title="Лимиты проекта" text="Успешные лимиты не включают ошибки; жёсткий лимит заявок включает все статусы."/>
         <form onSubmit={save}><div className="inputs">
           <Field label="Успешных за 10 минут" value={form.max_transactions_10m} onChange={set("max_transactions_10m")} hint="Скользящие 10 минут"/>
           <Field label="Успешных за час" value={form.max_transactions_hour} onChange={set("max_transactions_hour")} hint="Скользящий час"/>
           <Field label="Успешных за день" value={form.max_transactions_day} onChange={set("max_transactions_day")} hint="Календарный день по Москве"/>
+          <Field label="Всех заявок за час" value={form.max_all_transactions_hour ?? ""} onChange={set("max_all_transactions_hour")} hint="Любой статус; пусто — без лимита"/>
+          <Field label="Всех заявок за день" value={form.max_all_transactions_day ?? ""} onChange={set("max_all_transactions_day")} hint="Календарный день по Москве; любой статус"/>
           <Field label="Одновременно в ожидании" value={form.max_pending_transactions} onChange={set("max_pending_transactions")} hint="created, pending и processing"/>
           <Field label="Сумма успешных за день" value={form.daily_amount_limit} onChange={set("daily_amount_limit")} hint="Не включает ожидающие и ошибки"/>
           <label>Интервал между успешными, минут<input type="number" min="0" max="1440" value={form.cooldown_minutes} onChange={set("cooldown_minutes")}/><small>0 — паузы нет.</small></label>
         </div><label className="toggle"><input type="checkbox" checked={form.is_active} onChange={set("is_active")}/><i/>Применять лимиты к новым платежам</label><div className="submit-row"><small>Лимиты не меняют уже созданные заказы.</small><button className="primary">Сохранить</button></div></form>
       </article>
-      <article className="card"><CardTitle title="Как считаются показатели" text="Очередь и успешные лимиты разделены."/>
+      <article className="card"><CardTitle title="Как считаются показатели" text="Успехи, все заявки и очередь разделены."/>
         <Status ok={form.is_active} title="Успешные" detail={`${form.max_transactions_10m}/10 мин · ${form.max_transactions_hour}/час · ${form.max_transactions_day}/день`} state="Лимиты"/>
+        <Status ok={form.is_active} title="Все заявки" detail={`${form.max_all_transactions_hour || "∞"}/час · ${form.max_all_transactions_day || "∞"}/день`} state="Жёсткий фильтр"/>
         <Status ok={form.is_active} title="Очередь" detail={`до ${form.max_pending_transactions} одновременно`} state="Ожидание"/>
         <Status ok={form.is_active} title="Оборот" detail={`${form.daily_amount_limit} в валюте платежа`} state="Только успешно"/>
         <Status ok={form.is_active} title="Пауза" detail={form.cooldown_minutes ? `${form.cooldown_minutes} мин.` : "без паузы"} state="После успеха"/>

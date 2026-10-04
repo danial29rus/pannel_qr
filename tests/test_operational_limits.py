@@ -21,6 +21,8 @@ def policy(**overrides):
         "max_transactions_10m": 20,
         "max_transactions_hour": 30,
         "max_transactions_day": 300,
+        "max_all_transactions_hour": None,
+        "max_all_transactions_day": None,
         "max_pending_transactions": 3,
         "daily_amount_limit": Decimal("100000"),
         "cooldown_minutes": 0,
@@ -50,6 +52,7 @@ async def test_three_pending_payments_block_the_next_request(monkeypatch):
     payload = payment_payload()
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(max_pending_transactions=3)))
     monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_all_created_since", AsyncMock())
     monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=3))
 
     with pytest.raises(HTTPException) as error:
@@ -82,6 +85,7 @@ async def test_daily_amount_uses_only_successful_payments(monkeypatch):
     amount_used = AsyncMock(return_value=Decimal("70"))
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(daily_amount_limit=Decimal("100"))))
     monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_all_created_since", AsyncMock())
     monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
     monkeypatch.setattr(policies_service.TransactionDAO, "amount_used", amount_used)
 
@@ -96,6 +100,7 @@ async def test_cooldown_is_measured_from_the_last_successful_payment(monkeypatch
     latest_success = AsyncMock(return_value=datetime.now(UTC))
     monkeypatch.setattr(policies_service.OperationalPolicyDAO, "get", AsyncMock(return_value=policy(cooldown_minutes=15)))
     monkeypatch.setattr(policies_service.TransactionDAO, "count_succeeded_since", AsyncMock(side_effect=[0, 0, 0]))
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_all_created_since", AsyncMock())
     monkeypatch.setattr(policies_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
     monkeypatch.setattr(policies_service.TransactionDAO, "amount_used", AsyncMock(return_value=Decimal("0")))
     monkeypatch.setattr(policies_service.TransactionDAO, "latest_succeeded_at", latest_success)
@@ -106,3 +111,39 @@ async def test_cooldown_is_measured_from_the_last_successful_payment(monkeypatch
     assert error.value.status_code == 429
     assert error.value.detail["code"] == "payment_cooldown"
     latest_success.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_all_status_hourly_limit_blocks_cancelled_and_failed_request_volume(monkeypatch):
+    payload = payment_payload()
+    monkeypatch.setattr(
+        policies_service.OperationalPolicyDAO, "get",
+        AsyncMock(return_value=policy(max_all_transactions_hour=5)),
+    )
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_all_created_since", AsyncMock(return_value=5))
+
+    with pytest.raises(HTTPException) as error:
+        await OperationalPolicyService.assert_allows(SimpleNamespace(), payload)
+
+    assert error.value.status_code == 429
+    assert error.value.detail == {"code": "all_transactions_limit_hour", "limit": 5, "count": 5}
+
+
+@pytest.mark.asyncio
+async def test_all_status_daily_limit_uses_moscow_calendar_day(monkeypatch):
+    payload = payment_payload()
+    monkeypatch.setattr(
+        policies_service.OperationalPolicyDAO, "get",
+        AsyncMock(return_value=policy(max_all_transactions_day=50)),
+    )
+    count_all = AsyncMock(return_value=50)
+    monkeypatch.setattr(policies_service.TransactionDAO, "count_all_created_since", count_all)
+
+    with pytest.raises(HTTPException) as error:
+        await OperationalPolicyService.assert_allows(SimpleNamespace(), payload)
+
+    assert error.value.status_code == 429
+    assert error.value.detail["code"] == "all_transactions_limit_day"
+    assert error.value.detail["limit"] == 50
+    assert error.value.detail["count"] == 50
+    assert error.value.detail["timezone"] == "Europe/Moscow"
