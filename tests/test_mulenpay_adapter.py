@@ -83,7 +83,7 @@ async def test_provider_timeout_is_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monkeypatch):
+async def test_create_payment_returns_hosted_url_without_opening_payment_widget(monkeypatch):
     hosted_url = "https://api.mulenpay.com/payment/widget/widget-id"
 
     class PaymentClient(FakeClient):
@@ -95,14 +95,6 @@ async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monk
             type(self).requested_json = kwargs["json"]
             return FakeResponse({"id": 42, "paymentUrl": hosted_url})
 
-        async def get(self, url, **kwargs):
-            type(self).requested_urls.append(url)
-            return FakeResponse({
-                "success": True,
-                "sbp": True,
-                "data": {"qrpayload": "https://qr.nspk.ru/TEST-DIRECT-QR"},
-            })
-
     monkeypatch.setattr("app.payments.adapters.mulenpay.httpx.AsyncClient", PaymentClient)
 
     payment = await adapter().create_payment(CreatePaymentRequest(
@@ -110,30 +102,6 @@ async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monk
         direction=TransactionDirection.incoming, description="Test", extra={"hold_time_seconds": 900}, customer_email="buyer@example.com",
     ))
 
-    assert PaymentClient.requested_urls == ["https://api.mulenpay.com/api/v2/payments", f"{hosted_url}/sbp"]
+    assert PaymentClient.requested_urls == ["https://api.mulenpay.com/api/v2/payments"]
     assert PaymentClient.requested_json["holdTime"] == 900
-    assert payment.payload["payment_url"] == "https://qr.nspk.ru/TEST-DIRECT-QR"
-    assert payment.payload["hosted_payment_url"] == hosted_url
-    assert payment.payload["sbp_payment_url"] == "https://qr.nspk.ru/TEST-DIRECT-QR"
-
-
-@pytest.mark.asyncio
-async def test_create_payment_falls_back_to_hosted_url_when_sbp_is_not_available(monkeypatch):
-    hosted_url = "https://api.mulenpay.com/payment/widget/widget-id"
-
-    class PaymentClient(FakeClient):
-        async def post(self, url, **kwargs):
-            return FakeResponse({"id": 42, "paymentUrl": hosted_url})
-
-        async def get(self, url, **kwargs):
-            return FakeResponse({"success": True, "sbp": False, "data": {"qrpayload": ""}})
-
-    monkeypatch.setattr("app.payments.adapters.mulenpay.httpx.AsyncClient", PaymentClient)
-
-    payment = await adapter().create_payment(CreatePaymentRequest(
-        reference="merchant-order-2", amount=Decimal("10"), currency="RUB",
-        direction=TransactionDirection.incoming, description="Test", extra={}, customer_email="buyer@example.com",
-    ))
-
     assert payment.payload["payment_url"] == hosted_url
-    assert payment.payload["sbp_payment_url"] is None
