@@ -37,7 +37,7 @@ async def test_webhook_rolls_back_read_transaction_before_provider_status_check(
     session = Session(events)
     provider = SimpleNamespace(id="provider-1", is_active=True, adapter_type="demo", settings={}, credentials_encrypted={})
     transaction = SimpleNamespace(
-        id="transaction-1", project_id="project-1", amount=Decimal("50"), currency="RUB", state=TransactionState.pending,
+        id="transaction-1", project_id="project-1", provider_id="provider-1", amount=Decimal("50"), currency="RUB", state=TransactionState.pending,
         raw_provider_payload=None, settled_amount=None, fee_amount=Decimal("0"),
     )
 
@@ -62,6 +62,7 @@ async def test_webhook_rolls_back_read_transaction_before_provider_status_check(
     monkeypatch.setattr(payment_service.TransactionDAO, "get_by_provider_external_for_update", AsyncMock(return_value=transaction))
     monkeypatch.setattr(payment_service.ProviderRequestAttemptDAO, "append", AsyncMock())
     monkeypatch.setattr(payment_service.TransactionEventDAO, "append", AsyncMock())
+    monkeypatch.setattr(payment_service.RoutingService, "schedule_post_terminal_cooldown", AsyncMock())
     monkeypatch.setattr(OrderService, "sync_status_from_transaction", AsyncMock(return_value=None))
     monkeypatch.setattr(payment_service.registry, "get", lambda *_: Adapter())
 

@@ -196,7 +196,8 @@ function routeLimitsForm(route) {
     max_transactions_hour: route.max_transactions_hour ?? "",
     max_all_transactions_hour: route.max_all_transactions_hour ?? "",
     max_all_transactions_day: route.max_all_transactions_day ?? "",
-    post_terminal_cooldown_seconds: route.post_terminal_cooldown_seconds ?? "",
+    post_terminal_cooldown_min_seconds: route.post_terminal_cooldown_min_seconds ?? "",
+    post_terminal_cooldown_max_seconds: route.post_terminal_cooldown_max_seconds ?? "",
     max_pending_transactions: route.max_pending_transactions ?? "",
     available_from: route.available_from ? route.available_from.slice(0, 5) : "",
     available_to: route.available_to ? route.available_to.slice(0, 5) : "",
@@ -234,7 +235,8 @@ function RouteLimitsDialog({ route, projectName, onClose, onSaved }) {
           max_transactions_hour: numberOrNull(form.max_transactions_hour),
           max_all_transactions_hour: numberOrNull(form.max_all_transactions_hour),
           max_all_transactions_day: numberOrNull(form.max_all_transactions_day),
-          post_terminal_cooldown_seconds: numberOrNull(form.post_terminal_cooldown_seconds),
+          post_terminal_cooldown_min_seconds: numberOrNull(form.post_terminal_cooldown_min_seconds),
+          post_terminal_cooldown_max_seconds: numberOrNull(form.post_terminal_cooldown_max_seconds),
           max_pending_transactions: numberOrNull(form.max_pending_transactions),
           available_from: form.available_from || null,
           available_to: form.available_to || null,
@@ -269,7 +271,8 @@ function RouteLimitsDialog({ route, projectName, onClose, onSaved }) {
           <label>Успешных за час<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_transactions_hour} onChange={set("max_transactions_hour")}/></label>
           <label>Всех заявок за час<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_all_transactions_hour} onChange={set("max_all_transactions_hour")}/></label>
           <label>Всех заявок за день<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_all_transactions_day} onChange={set("max_all_transactions_day")}/></label>
-          <label>Пауза после завершения, сек<input type="number" min="0" max="86400" step="1" placeholder="Без паузы" value={form.post_terminal_cooldown_seconds} onChange={set("post_terminal_cooldown_seconds")}/></label>
+          <label>Пауза после завершения: от, сек<input type="number" min="0" max="86400" step="1" placeholder="Без паузы" value={form.post_terminal_cooldown_min_seconds} onChange={set("post_terminal_cooldown_min_seconds")}/></label>
+          <label>Пауза после завершения: до, сек<input type="number" min="0" max="86400" step="1" placeholder="Без паузы" value={form.post_terminal_cooldown_max_seconds} onChange={set("post_terminal_cooldown_max_seconds")}/></label>
           <label>Одновременно в ожидании<input type="number" min="1" step="1" placeholder="Без лимита" value={form.max_pending_transactions} onChange={set("max_pending_transactions")}/></label>
         </div></div>
         <div className="route-form-section"><h3>Время работы</h3><div className="route-form-grid route-time-grid">

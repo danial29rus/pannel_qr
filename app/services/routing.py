@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from math import ceil
+from secrets import randbelow
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -61,6 +62,33 @@ class RoutingService:
             raise HTTPException(status_code=422, detail="min_amount cannot exceed max_amount")
         if (payload.available_from is None) != (payload.available_to is None):
             raise HTTPException(status_code=422, detail="Set both available_from and available_to, or neither")
+        minimum = payload.post_terminal_cooldown_min_seconds
+        maximum = payload.post_terminal_cooldown_max_seconds
+        if (minimum is None) != (maximum is None):
+            raise HTTPException(status_code=422, detail="Set both post-terminal cooldown bounds, or neither")
+        if minimum is not None and minimum > maximum:
+            raise HTTPException(status_code=422, detail="post_terminal_cooldown_min_seconds cannot exceed maximum")
+
+    @staticmethod
+    async def schedule_post_terminal_cooldown(
+        session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID, ended_at: datetime,
+    ) -> None:
+        """Choose and persist one jitter value per terminal provider result.
+
+        Routes for the same project/provider already share usage accounting, so
+        they deliberately share the terminal event while retaining their own
+        configured jitter range.
+        """
+        for route in await ProviderRouteDAO.list_by_project(session, project_id):
+            if route.provider_id != provider_id:
+                continue
+            minimum = route.post_terminal_cooldown_min_seconds
+            maximum = route.post_terminal_cooldown_max_seconds
+            if minimum is None or maximum is None:
+                continue
+            delay = minimum + randbelow(maximum - minimum + 1)
+            route.post_terminal_cooldown_until = ended_at + timedelta(seconds=delay)
+            await ProviderRouteDAO.save(session, route)
 
     @staticmethod
     async def create_route(session: AsyncSession, project_id: uuid.UUID, payload: ProviderRouteCreate) -> ProjectProviderRoute:
@@ -136,16 +164,12 @@ class RoutingService:
             return result(False, "Платёжка выключена")
         if not is_in_time_window(current_time, route.available_from, route.available_to):
             return result(False, "Сейчас вне окна работы")
-        if route.post_terminal_cooldown_seconds:
-            latest_terminal = await TransactionDAO.latest_terminal_at(session, route.project_id, route.provider_id)
-            if latest_terminal:
-                elapsed = (now - latest_terminal).total_seconds()
-                if elapsed < route.post_terminal_cooldown_seconds:
-                    return result(
-                        False,
-                        "Пауза между заявками после завершения платежа",
-                        max(1, ceil(route.post_terminal_cooldown_seconds - elapsed)),
-                    )
+        if route.post_terminal_cooldown_until and now < route.post_terminal_cooldown_until:
+            return result(
+                False,
+                "Случайная пауза между заявками после завершения платежа",
+                max(1, ceil((route.post_terminal_cooldown_until - now).total_seconds())),
+            )
         if route.max_all_transactions_hour is not None and all_hour_count >= route.max_all_transactions_hour:
             return result(False, "Лимит всех заявок за час исчерпан")
         if route.max_all_transactions_day is not None and all_day_count >= route.max_all_transactions_day:

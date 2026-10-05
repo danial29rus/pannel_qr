@@ -180,6 +180,13 @@ async def apply_provider_update(session: AsyncSession, transaction: Transaction,
     transaction.fee_amount = payment.fee_amount
     if payment.state != transaction.state:
         await append_event(session, transaction, "provider.status_changed", payment.state, payload=payment.payload)
+        if payment.state in (
+            TransactionState.succeeded, TransactionState.failed,
+            TransactionState.cancelled, TransactionState.refunded,
+        ):
+            await RoutingService.schedule_post_terminal_cooldown(
+                session, transaction.project_id, transaction.provider_id, datetime.now(UTC),
+            )
     return transaction
 
 
