@@ -212,7 +212,7 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
         payload = payload.model_copy(update={"description": default_description})
     try:
         transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
-        if not transaction.payment_url:
+        if not transaction.payment_url or not transaction.payment_url.startswith("https://qr.nspk.ru/"):
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={
