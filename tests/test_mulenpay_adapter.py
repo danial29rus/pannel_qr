@@ -118,7 +118,7 @@ async def test_create_payment_returns_direct_nspk_url_when_sbp_is_available(monk
 
 
 @pytest.mark.asyncio
-async def test_create_payment_falls_back_to_hosted_url_when_sbp_is_not_available(monkeypatch):
+async def test_create_payment_fails_without_direct_nspk_url_and_never_returns_hosted_widget(monkeypatch):
     hosted_url = "https://api.mulenpay.com/payment/widget/widget-id"
 
     class PaymentClient(FakeClient):
@@ -135,5 +135,8 @@ async def test_create_payment_falls_back_to_hosted_url_when_sbp_is_not_available
         direction=TransactionDirection.incoming, description="Test", extra={}, customer_email="buyer@example.com",
     ))
 
-    assert payment.payload["payment_url"] == hosted_url
+    assert payment.state is TransactionState.failed
+    assert payment.payload["payment_url"] is None
+    assert payment.payload["hosted_payment_url"] == hosted_url
     assert payment.payload["sbp_payment_url"] is None
+    assert payment.payload["error"]["code"] == "sbp_qr_unavailable"

@@ -133,11 +133,14 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
     for attempt in range(1, max_attempts + 1):
         try:
             provider_payment = await adapter.create_payment(request)
+            provider_error = (provider_payment.payload or {}).get("error")
+            sbp_status = ((provider_payment.payload or {}).get("sbp") or {}).get("status_code")
+            provider_error_message = provider_error.get("message") if isinstance(provider_error, dict) else None
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(
                 transaction_id=transaction.id,
                 operation="create_payment",
                 attempt=attempt,
-                outcome="success",
+                outcome="error" if provider_error else "success",
                 request_payload={
                     "reference": request.reference,
                     "amount": str(request.amount),
@@ -145,8 +148,8 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
                     "hold_time_seconds": request.extra.get("hold_time_seconds"),
                 },
                 response_payload=provider_payment.payload,
-                http_status=201,
-                error=None,
+                http_status=sbp_status or 201,
+                error=provider_error_message,
             ))
             break
         except RetryableProviderError as exc:

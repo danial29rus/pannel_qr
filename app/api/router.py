@@ -212,6 +212,15 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
         payload = payload.model_copy(update={"description": default_description})
     try:
         transaction = await PaymentService.create_merchant_qr_payment(session, project_id, payload)
+        if not transaction.payment_url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "code": "sbp_qr_unavailable",
+                    "message": "Payment provider did not return a direct NSPK QR payment URL",
+                    "transaction_id": str(transaction.id),
+                },
+            )
         response = MerchantQrPaymentResponse(
             id=transaction.id,
             merchant_transaction_id=payload.merchant_transaction_id,

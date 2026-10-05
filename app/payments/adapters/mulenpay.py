@@ -81,11 +81,31 @@ class MulenPayAdapter:
         sbp_payload = None
         if isinstance(hosted_payment_url, str) and hosted_payment_url.startswith("https://"):
             sbp_url, sbp_payload = await self._get_sbp_url(hosted_payment_url)
+        if not sbp_url:
+            # A hosted widget is not a valid substitute for the direct QR
+            # contract exposed by /transactions/qr.  Keep the provider
+            # response for the operator trace, but never hand that widget URL
+            # to the external platform as if it were an NSPK payment link.
+            return ProviderPayment(
+                external_id=str(data["id"]), state=TransactionState.failed,
+                amount=request.amount, currency=request.currency,
+                payload={
+                    "payment_url": None,
+                    "hosted_payment_url": hosted_payment_url,
+                    "sbp_payment_url": None,
+                    "provider": data,
+                    "sbp": sbp_payload,
+                    "error": {
+                        "code": "sbp_qr_unavailable",
+                        "message": "MulenPay did not return a direct NSPK QR payment URL",
+                    },
+                },
+            )
         return ProviderPayment(
             external_id=str(data["id"]), state=TransactionState.pending,
             amount=request.amount, currency=request.currency,
             payload={
-                "payment_url": sbp_url or hosted_payment_url,
+                "payment_url": sbp_url,
                 "hosted_payment_url": hosted_payment_url,
                 "sbp_payment_url": sbp_url,
                 "provider": data,
