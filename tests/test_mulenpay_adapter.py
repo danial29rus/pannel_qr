@@ -6,6 +6,7 @@ import pytest
 from app.db.models import TransactionDirection, TransactionState
 from app.payments.adapters.base import CreatePaymentRequest, RetryableProviderError
 from app.payments.adapters.mulenpay import MulenPayAdapter
+import app.payments.adapters.mulenpay as mulenpay_module
 
 
 class FakeResponse:
@@ -122,13 +123,20 @@ async def test_create_payment_fails_without_direct_nspk_url_and_never_returns_ho
     hosted_url = "https://api.mulenpay.com/payment/widget/widget-id"
 
     class PaymentClient(FakeClient):
+        get_calls = 0
+
         async def post(self, url, **kwargs):
             return FakeResponse({"id": 42, "paymentUrl": hosted_url})
 
         async def get(self, url, **kwargs):
+            type(self).get_calls += 1
             return FakeResponse({"success": True, "sbp": False, "data": {"qrpayload": ""}})
 
+    async def no_sleep(_):
+        return None
+
     monkeypatch.setattr("app.payments.adapters.mulenpay.httpx.AsyncClient", PaymentClient)
+    monkeypatch.setattr(mulenpay_module.asyncio, "sleep", no_sleep)
 
     payment = await adapter().create_payment(CreatePaymentRequest(
         reference="merchant-order-2", amount=Decimal("10"), currency="RUB",
@@ -140,3 +148,55 @@ async def test_create_payment_fails_without_direct_nspk_url_and_never_returns_ho
     assert payment.payload["hosted_payment_url"] == hosted_url
     assert payment.payload["sbp_payment_url"] is None
     assert payment.payload["error"]["code"] == "sbp_qr_unavailable"
+    assert PaymentClient.get_calls == 2
+    assert payment.payload["sbp"]["failed_attempts"][-1]["attempt"] == 2
+
+
+@pytest.mark.asyncio
+async def test_create_payment_retries_sbp_once_before_returning_direct_qr(monkeypatch):
+    hosted_url = "https://api.mulenpay.com/payment/widget/widget-id"
+
+    class PaymentClient(FakeClient):
+        requested_urls = []
+        get_calls = 0
+
+        async def post(self, url, **kwargs):
+            type(self).requested_urls.append(url)
+            return FakeResponse({"id": 42, "paymentUrl": hosted_url})
+
+        async def get(self, url, **kwargs):
+            type(self).requested_urls.append(url)
+            type(self).get_calls += 1
+            if type(self).get_calls == 1:
+                return FakeResponse({"success": False}, status_code=400)
+            return FakeResponse({
+                "success": True,
+                "sbp": True,
+                "data": {"qrpayload": "https://qr.nspk.ru/RETRY-SUCCESS"},
+            })
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr("app.payments.adapters.mulenpay.httpx.AsyncClient", PaymentClient)
+    monkeypatch.setattr(mulenpay_module.asyncio, "sleep", no_sleep)
+
+    payment = await adapter().create_payment(CreatePaymentRequest(
+        reference="merchant-order-retry", amount=Decimal("10"), currency="RUB",
+        direction=TransactionDirection.incoming, description="Test", extra={}, customer_email="buyer@example.com",
+    ))
+
+    assert payment.state is TransactionState.pending
+    assert payment.payload["payment_url"] == "https://qr.nspk.ru/RETRY-SUCCESS"
+    assert PaymentClient.get_calls == 2
+    assert PaymentClient.requested_urls == [
+        "https://api.mulenpay.com/api/v2/payments",
+        f"{hosted_url}/sbp",
+        f"{hosted_url}/sbp",
+    ]
+    assert payment.payload["sbp"]["attempt"] == 2
+    assert payment.payload["sbp"]["failed_attempts"] == [{
+        "attempt": 1,
+        "status_code": 400,
+        "body": "provider response",
+    }]

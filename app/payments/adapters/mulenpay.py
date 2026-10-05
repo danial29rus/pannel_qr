@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -12,6 +13,11 @@ from app.payments.adapters.base import CreatePaymentRequest, ProviderPayment, Re
 class MulenPayAdapter:
     # MulenPay sends the receipt/customer context using `client`.
     requires_customer_email = True
+    # The hosted checkout occasionally returns a transient error while its
+    # SBP endpoint is being prepared.  Make one short, guarded retry only in
+    # that case.  Never request /sbp again after it has supplied a QR URL.
+    SBP_QR_ATTEMPTS = 2
+    SBP_QR_RETRY_DELAY_SECONDS = 1
 
     def __init__(self, config: dict) -> None:
         self.api_key = str(config.get("api_key", ""))
@@ -42,16 +48,50 @@ class MulenPayAdapter:
         return None
 
     async def _get_sbp_url(self, hosted_payment_url: str) -> tuple[str | None, dict | None]:
-        """Obtain the direct SBP QR URL from MulenPay's hosted checkout."""
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(f"{hosted_payment_url.rstrip('/')}/sbp")
-            if response.status_code >= 400:
-                return None, {"status_code": response.status_code, "body": response.text[:1000]}
-            payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            return None, {"error": str(exc)}
-        return self._sbp_url(payload), payload
+        """Obtain a direct SBP QR URL, retrying one failed preparation once."""
+        sbp_endpoint = f"{hosted_payment_url.rstrip('/')}/sbp"
+        failed_attempts: list[dict] = []
+
+        for attempt in range(1, self.SBP_QR_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    response = await client.get(sbp_endpoint)
+                if response.status_code >= 400:
+                    attempt_result = {
+                        "attempt": attempt,
+                        "status_code": response.status_code,
+                        "body": response.text[:1000],
+                    }
+                else:
+                    payload = response.json()
+                    sbp_url = self._sbp_url(payload)
+                    if sbp_url:
+                        # Preserve any preceding failure in the operator
+                        # trace, without causing another request after this
+                        # successful QR response.
+                        return sbp_url, {
+                            "attempt": attempt,
+                            "failed_attempts": failed_attempts,
+                            "response": payload,
+                        }
+                    attempt_result = {
+                        "attempt": attempt,
+                        "status_code": response.status_code,
+                        "response": payload,
+                        "error": "Direct NSPK QR URL is absent in the SBP response",
+                    }
+            except (httpx.HTTPError, ValueError) as exc:
+                attempt_result = {"attempt": attempt, "error": str(exc)}
+
+            failed_attempts.append(attempt_result)
+            if attempt < self.SBP_QR_ATTEMPTS:
+                await asyncio.sleep(self.SBP_QR_RETRY_DELAY_SECONDS)
+
+        # Keep every failure in the payment trace.  The last status code is
+        # duplicated at top level for the standard provider-attempt log.
+        result = dict(failed_attempts[-1])
+        result["failed_attempts"] = failed_attempts
+        return None, result
 
     @staticmethod
     def _state(value: int | str) -> TransactionState:
