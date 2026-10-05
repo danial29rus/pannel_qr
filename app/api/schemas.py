@@ -175,6 +175,7 @@ class ProviderRouteCreate(BaseModel):
     max_transactions_hour: int | None = Field(default=None, gt=0)
     max_all_transactions_hour: int | None = Field(default=None, gt=0)
     max_all_transactions_day: int | None = Field(default=None, gt=0)
+    post_terminal_cooldown_seconds: int | None = Field(default=None, ge=0, le=86_400)
     max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None
@@ -203,6 +204,7 @@ class ProviderRouteUpdate(BaseModel):
     max_transactions_hour: int | None = Field(default=None, gt=0)
     max_all_transactions_hour: int | None = Field(default=None, gt=0)
     max_all_transactions_day: int | None = Field(default=None, gt=0)
+    post_terminal_cooldown_seconds: int | None = Field(default=None, ge=0, le=86_400)
     max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None

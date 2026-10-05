@@ -2,6 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from math import ceil
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -46,6 +47,7 @@ class RouteEvaluation:
     reason: str | None = None
     all_hour_count: int = 0
     all_day_count: int = 0
+    retry_after_seconds: int | None = None
 
     @property
     def utilization(self) -> Decimal:
@@ -119,10 +121,10 @@ class RoutingService:
         all_hour_count = await TransactionDAO.count_all_created_since(session, route.project_id, now - timedelta(hours=1), route.provider_id)
         all_day_count = await TransactionDAO.count_all_created_since(session, route.project_id, start_of_day(now), route.provider_id)
         pending_count = await TransactionDAO.count_pending(session, route.project_id, route.provider_id)
-        def result(available: bool, reason: str | None = None) -> RouteEvaluation:
+        def result(available: bool, reason: str | None = None, retry_after_seconds: int | None = None) -> RouteEvaluation:
             return RouteEvaluation(
                 daily_amount, weekly_amount, daily_count, weekly_count, ten_minute_count,
-                hourly_count, pending_count, available, reason, all_hour_count, all_day_count,
+                hourly_count, pending_count, available, reason, all_hour_count, all_day_count, retry_after_seconds,
             )
         # Route schedules are configured and displayed in Moscow time, the
         # same timezone used for daily and weekly limits.
@@ -134,6 +136,16 @@ class RoutingService:
             return result(False, "Платёжка выключена")
         if not is_in_time_window(current_time, route.available_from, route.available_to):
             return result(False, "Сейчас вне окна работы")
+        if route.post_terminal_cooldown_seconds:
+            latest_terminal = await TransactionDAO.latest_terminal_at(session, route.project_id, route.provider_id)
+            if latest_terminal:
+                elapsed = (now - latest_terminal).total_seconds()
+                if elapsed < route.post_terminal_cooldown_seconds:
+                    return result(
+                        False,
+                        "Пауза между заявками после завершения платежа",
+                        max(1, ceil(route.post_terminal_cooldown_seconds - elapsed)),
+                    )
         if route.max_all_transactions_hour is not None and all_hour_count >= route.max_all_transactions_hour:
             return result(False, "Лимит всех заявок за час исчерпан")
         if route.max_all_transactions_day is not None and all_day_count >= route.max_all_transactions_day:
@@ -193,6 +205,7 @@ class RoutingService:
                 raise HTTPException(status_code=404, detail="Active payment provider not found")
             return provider
         candidates: list[tuple[ProjectProviderRoute, PaymentProvider, RouteEvaluation]] = []
+        evaluations: list[RouteEvaluation] = []
         for route in routes:
             provider = await ProviderDAO.get(session, route.provider_id)
             if not provider:
@@ -200,9 +213,16 @@ class RoutingService:
             if provider_code and provider.code != provider_code:
                 continue
             evaluation = await cls.evaluate(session, route, amount)
+            evaluations.append(evaluation)
             if evaluation.available:
                 candidates.append((route, provider, evaluation))
         if not candidates:
+            cooldowns = [item.retry_after_seconds for item in evaluations if item.retry_after_seconds is not None]
+            if cooldowns and len(cooldowns) == len(evaluations):
+                raise HTTPException(status_code=429, detail={
+                    "code": "route_post_terminal_cooldown",
+                    "retry_after_seconds": min(cooldowns),
+                })
             raise HTTPException(status_code=422, detail="No enabled payment route can process this payment within its schedule and limits")
         route, provider, _ = min(candidates, key=lambda item: cls.balance_score(item[0], item[2]))
         return provider

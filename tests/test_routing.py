@@ -39,7 +39,7 @@ async def test_route_blocks_when_pending_queue_is_full(monkeypatch):
         project_id="project-1", provider_id="provider-1", is_active=True,
         available_from=None, available_to=None, max_transactions_10m=10,
         max_transactions_hour=20, max_all_transactions_hour=None, max_all_transactions_day=None,
-        max_pending_transactions=2, min_amount=None,
+        post_terminal_cooldown_seconds=None, max_pending_transactions=2, min_amount=None,
         max_amount=None, daily_amount_limit=None, weekly_amount_limit=None,
         daily_transactions_limit=None, weekly_transactions_limit=None,
     )
@@ -61,7 +61,7 @@ async def test_ten_successful_payments_in_five_second_intervals_hit_route_ten_mi
         project_id="project-1", provider_id="provider-1", is_active=True,
         available_from=None, available_to=None, max_transactions_10m=10,
         max_transactions_hour=20, max_all_transactions_hour=None, max_all_transactions_day=None,
-        max_pending_transactions=3, min_amount=None,
+        post_terminal_cooldown_seconds=None, max_pending_transactions=3, min_amount=None,
         max_amount=None, daily_amount_limit=None, weekly_amount_limit=None,
         daily_transactions_limit=None, weekly_transactions_limit=None,
     )
@@ -83,7 +83,7 @@ async def test_route_blocks_all_status_volume_even_when_payments_were_cancelled(
         project_id="project-1", provider_id="provider-1", is_active=True,
         available_from=None, available_to=None, max_transactions_10m=None,
         max_transactions_hour=None, max_all_transactions_hour=5, max_all_transactions_day=50,
-        max_pending_transactions=None, min_amount=None, max_amount=None,
+        post_terminal_cooldown_seconds=None, max_pending_transactions=None, min_amount=None, max_amount=None,
         daily_amount_limit=None, weekly_amount_limit=None,
         daily_transactions_limit=None, weekly_transactions_limit=None,
     )
@@ -97,3 +97,27 @@ async def test_route_blocks_all_status_volume_even_when_payments_were_cancelled(
 
     assert not result.available
     assert result.reason == "Лимит всех заявок за час исчерпан"
+
+
+@pytest.mark.asyncio
+async def test_route_blocks_new_order_for_configured_pause_after_terminal_result(monkeypatch):
+    route = SimpleNamespace(
+        project_id="project-1", provider_id="provider-1", is_active=True,
+        available_from=None, available_to=None, max_transactions_10m=None,
+        max_transactions_hour=None, max_all_transactions_hour=None, max_all_transactions_day=None,
+        post_terminal_cooldown_seconds=30, max_pending_transactions=None,
+        min_amount=None, max_amount=None, daily_amount_limit=None, weekly_amount_limit=None,
+        daily_transactions_limit=None, weekly_transactions_limit=None,
+    )
+    monkeypatch.setattr(routing_service.TransactionDAO, "provider_usage", AsyncMock(return_value=(Decimal("0"), 0)))
+    monkeypatch.setattr(routing_service.TransactionDAO, "count_succeeded_since", AsyncMock(return_value=0))
+    monkeypatch.setattr(routing_service.TransactionDAO, "count_all_created_since", AsyncMock(return_value=0))
+    monkeypatch.setattr(routing_service.TransactionDAO, "count_pending", AsyncMock(return_value=0))
+    monkeypatch.setattr(routing_service.TransactionDAO, "latest_terminal_at", AsyncMock(return_value=routing_service.datetime.now(routing_service.UTC)))
+    monkeypatch.setattr(routing_service.ProviderDAO, "get", AsyncMock(return_value=SimpleNamespace(is_active=True)))
+
+    result = await RoutingService.evaluate(SimpleNamespace(), route, Decimal("100"))
+
+    assert not result.available
+    assert result.reason == "Пауза между заявками после завершения платежа"
+    assert 1 <= result.retry_after_seconds <= 30

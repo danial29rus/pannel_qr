@@ -371,6 +371,20 @@ class TransactionDAO:
         ))
 
     @staticmethod
+    async def latest_terminal_at(
+        session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID,
+    ) -> datetime | None:
+        """Latest final payment state for one route, using its actual transition time."""
+        return await session.scalar(select(func.max(Transaction.updated_at)).where(
+            Transaction.project_id == project_id,
+            Transaction.provider_id == provider_id,
+            Transaction.state.in_((
+                TransactionState.succeeded, TransactionState.failed,
+                TransactionState.cancelled, TransactionState.refunded,
+            )),
+        ))
+
+    @staticmethod
     async def provider_usage(
         session: AsyncSession, project_id: uuid.UUID, provider_id: uuid.UUID, since: datetime | None,
         counted_states: tuple[TransactionState, ...],
