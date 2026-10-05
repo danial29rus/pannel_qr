@@ -40,6 +40,8 @@ class RoutingAnalyticsService:
                     weekly_used_transactions=evaluation.weekly_count,
                     ten_minute_used_transactions=evaluation.ten_minute_count,
                     hourly_used_transactions=evaluation.hourly_count,
+                    all_hour_used_transactions=evaluation.all_hour_count,
+                    all_day_used_transactions=evaluation.all_day_count,
                     pending_transactions=evaluation.pending_count,
                     is_available=evaluation.available,
                     unavailable_reason=evaluation.reason,

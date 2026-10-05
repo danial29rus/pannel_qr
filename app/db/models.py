@@ -183,6 +183,8 @@ class ProjectProviderRoute(Base):
     weekly_transactions_limit: Mapped[int | None] = mapped_column()
     max_transactions_10m: Mapped[int | None] = mapped_column()
     max_transactions_hour: Mapped[int | None] = mapped_column()
+    max_all_transactions_hour: Mapped[int | None] = mapped_column()
+    max_all_transactions_day: Mapped[int | None] = mapped_column()
     max_pending_transactions: Mapped[int | None] = mapped_column()
     available_from: Mapped[time | None] = mapped_column()
     available_to: Mapped[time | None] = mapped_column()

@@ -173,6 +173,8 @@ class ProviderRouteCreate(BaseModel):
     weekly_transactions_limit: int | None = Field(default=None, gt=0)
     max_transactions_10m: int | None = Field(default=None, gt=0)
     max_transactions_hour: int | None = Field(default=None, gt=0)
+    max_all_transactions_hour: int | None = Field(default=None, gt=0)
+    max_all_transactions_day: int | None = Field(default=None, gt=0)
     max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None
@@ -199,6 +201,8 @@ class ProviderRouteUpdate(BaseModel):
     weekly_transactions_limit: int | None = Field(default=None, gt=0)
     max_transactions_10m: int | None = Field(default=None, gt=0)
     max_transactions_hour: int | None = Field(default=None, gt=0)
+    max_all_transactions_hour: int | None = Field(default=None, gt=0)
+    max_all_transactions_day: int | None = Field(default=None, gt=0)
     max_pending_transactions: int | None = Field(default=None, gt=0)
     available_from: time | None = None
     available_to: time | None = None
@@ -218,6 +222,8 @@ class ProviderRouteAnalytics(ProviderRouteRead):
     weekly_used_transactions: int
     ten_minute_used_transactions: int
     hourly_used_transactions: int
+    all_hour_used_transactions: int
+    all_day_used_transactions: int
     pending_transactions: int
     is_available: bool
     unavailable_reason: str | None = None

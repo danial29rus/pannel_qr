@@ -340,13 +340,16 @@ class TransactionDAO:
 
     @staticmethod
     async def count_all_created_since(
-        session: AsyncSession, project_id: uuid.UUID, since: datetime,
+        session: AsyncSession, project_id: uuid.UUID, since: datetime, provider_id: uuid.UUID | None = None,
     ) -> int:
         """Count every payment request created in a time window, regardless of final state."""
-        return int(await session.scalar(select(func.count(Transaction.id)).where(
+        filters = [
             Transaction.project_id == project_id,
             Transaction.created_at >= since,
-        )) or 0)
+        ]
+        if provider_id is not None:
+            filters.append(Transaction.provider_id == provider_id)
+        return int(await session.scalar(select(func.count(Transaction.id)).where(*filters)) or 0)
 
     @staticmethod
     async def count_pending(
