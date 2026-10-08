@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from math import ceil
-from secrets import randbelow
+from secrets import randbelow, SystemRandom
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -248,5 +248,15 @@ class RoutingService:
                     "retry_after_seconds": min(cooldowns),
                 })
             raise HTTPException(status_code=422, detail="No enabled payment route can process this payment within its schedule and limits")
-        route, provider, _ = min(candidates, key=lambda item: cls.balance_score(item[0], item[2]))
-        return provider
+        return cls.pick_weighted(candidates)[1]
+
+    @staticmethod
+    def pick_weighted(candidates: list[tuple[ProjectProviderRoute, PaymentProvider, RouteEvaluation]]):
+        """Split traffic by weight among the best-priority available routes.
+
+        Lower priority wins outright; routes with a worse priority are a pure
+        fallback used only when every better one is unavailable.
+        """
+        best_priority = min(item[0].priority for item in candidates)
+        pool = [item for item in candidates if item[0].priority == best_priority]
+        return SystemRandom().choices(pool, weights=[max(1, item[0].weight) for item in pool])[0]

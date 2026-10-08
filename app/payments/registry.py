@@ -1,3 +1,4 @@
+from app.payments.adapters.aipay import AIPayAdapter
 from app.payments.adapters.base import PaymentAdapter
 from app.payments.adapters.demo import DemoProcessorAdapter
 from app.payments.adapters.mulenpay import MulenPayAdapter
@@ -10,6 +11,8 @@ class AdapterRegistry:
     def get(self, adapter_type: str, config: dict | None = None) -> PaymentAdapter:
         if adapter_type == "mulenpay":
             return MulenPayAdapter(config or {})
+        if adapter_type == "aipay":
+            return AIPayAdapter(config or {})
         try:
             return self._adapters[adapter_type]
         except KeyError as exc:
