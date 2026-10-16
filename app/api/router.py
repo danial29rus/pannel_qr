@@ -1,15 +1,16 @@
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, MerchantQrPaymentCreate, MerchantQrPaymentResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
-    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionRead, TransactionTrace, UserCreate, UserEmailImport, UserImportResult, UserPage, UserRead, UserUpdate,
+    OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionPage, TransactionRead, TransactionTrace, UserCreate, UserEmailImport, UserImportResult, UserPage, UserRead, UserUpdate,
 )
 from app.db.session import get_session
-from app.db.models import ActorRole
+from app.db.models import ActorRole, TransactionState
 from app.api.security import require_roles
 from app.payments.service import PaymentService
 from app.services.catalog import CatalogService
@@ -260,9 +261,27 @@ async def add_transaction(
     return await PaymentService.create(session, payload, idempotency_key)
 
 
-@router.get("/transactions", response_model=list[TransactionListItem], dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator, ActorRole.viewer))])
-async def list_transactions(project_id: uuid.UUID, limit: int = 50, session: AsyncSession = Depends(get_session)):
-    return await PaymentService.list(session, project_id, limit)
+@router.get("/transactions", response_model=TransactionPage, dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator, ActorRole.viewer))])
+async def list_transactions(
+    project_id: uuid.UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=10, le=200),
+    transaction_id: str | None = Query(default=None, min_length=1, max_length=128),
+    amount_from: Decimal | None = Query(default=None, ge=0),
+    amount_to: Decimal | None = Query(default=None, ge=0),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
+    state: TransactionState | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    if amount_from is not None and amount_to is not None and amount_from > amount_to:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="amount_from must not exceed amount_to")
+    if created_from is not None and created_to is not None and created_from > created_to:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="created_from must not be later than created_to")
+    return await PaymentService.list(
+        session, project_id, page, page_size, transaction_id, amount_from, amount_to,
+        created_from, created_to, state,
+    )
 
 
 @router.get("/transactions/{transaction_id}/trace", response_model=TransactionTrace, dependencies=[Depends(require_roles(ActorRole.admin, ActorRole.operator))])

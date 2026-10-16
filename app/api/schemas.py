@@ -331,6 +331,15 @@ class TransactionListItem(TransactionRead):
     merchant_transaction_id: str | None = None
 
 
+class TransactionPage(BaseModel):
+    """A server-filtered page of operations for the payments journal."""
+    items: list[TransactionListItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class PaymentTraceEntry(BaseModel):
     """One immutable step in the life of a payment, ordered by occurrence."""
     id: str

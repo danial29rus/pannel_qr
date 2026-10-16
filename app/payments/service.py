@@ -1,11 +1,12 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceCustomer, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionTrace
+from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceCustomer, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionPage, TransactionTrace
 from app.dao.repositories import (
     ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
     ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO,
@@ -336,9 +337,27 @@ class PaymentService:
         )
 
     @staticmethod
-    async def list(session: AsyncSession, project_id, limit: int) -> list[TransactionListItem]:
-        rows = await TransactionDAO.list_operation_rows(session, project_id, min(max(limit, 1), 200))
-        return [PaymentService._operation_row(row) for row in rows]
+    async def list(
+        session: AsyncSession,
+        project_id,
+        page: int,
+        page_size: int,
+        transaction_id: str | None = None,
+        amount_from: Decimal | None = None,
+        amount_to: Decimal | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        state: TransactionState | None = None,
+    ) -> TransactionPage:
+        page_size = min(max(page_size, 10), 200)
+        rows, total = await TransactionDAO.page_operation_rows(
+            session, project_id, page, page_size, transaction_id, amount_from,
+            amount_to, created_from, created_to, state,
+        )
+        return TransactionPage(
+            items=[PaymentService._operation_row(row) for row in rows], total=total,
+            page=page, page_size=page_size, pages=max(1, (total + page_size - 1) // page_size),
+        )
 
     @staticmethod
     async def trace(session: AsyncSession, transaction_id) -> TransactionTrace:

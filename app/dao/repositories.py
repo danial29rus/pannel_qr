@@ -261,23 +261,61 @@ class TransactionDAO:
         )).all())
 
     @staticmethod
-    async def list_operation_rows(session: AsyncSession, project_id: uuid.UUID, limit: int):
+    async def page_operation_rows(
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        page: int,
+        page_size: int,
+        transaction_id: str | None = None,
+        amount_from: Decimal | None = None,
+        amount_to: Decimal | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        state: TransactionState | None = None,
+    ):
         """Payment rows together with the provider and optional originating order.
 
         Keeping this as one query prevents the panel from doing an N+1 lookup
         for every payment shown in the operations journal.
         """
-        return (await session.execute(
+        filters = [Transaction.project_id == project_id]
+        if transaction_id:
+            # UUIDs are stored natively, so cast only for the partial-ID search
+            # used by operators who usually paste a prefix from a provider log.
+            filters.append(cast(Transaction.id, String).ilike(f"%{transaction_id.strip()}%"))
+        if amount_from is not None:
+            filters.append(Transaction.amount >= amount_from)
+        if amount_to is not None:
+            filters.append(Transaction.amount <= amount_to)
+        if created_from is not None:
+            filters.append(Transaction.created_at >= created_from)
+        if created_to is not None:
+            filters.append(Transaction.created_at <= created_to)
+        if state is not None:
+            filters.append(Transaction.state == state)
+
+        total = int(await session.scalar(
+            select(func.count(Transaction.id)).where(*filters)
+        ) or 0)
+        rows = (await session.execute(
             select(
                 Transaction, PaymentProvider.code, PaymentProvider.name,
                 Order.id, Order.reference, Order.external_order_id,
             )
             .join(PaymentProvider, PaymentProvider.id == Transaction.provider_id)
             .outerjoin(Order, Order.transaction_id == Transaction.id)
-            .where(Transaction.project_id == project_id)
-            .order_by(Transaction.created_at.desc())
-            .limit(limit)
+            .where(*filters)
+            .order_by(Transaction.created_at.desc(), Transaction.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )).all()
+        return rows, total
+
+    @staticmethod
+    async def list_operation_rows(session: AsyncSession, project_id: uuid.UUID, limit: int):
+        """Backward-compatible unfiltered operation list for internal callers."""
+        rows, _ = await TransactionDAO.page_operation_rows(session, project_id, 1, limit)
+        return rows
 
     @staticmethod
     async def list_open_without_order(session: AsyncSession, limit: int = 200) -> list[uuid.UUID]:
