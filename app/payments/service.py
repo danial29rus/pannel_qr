@@ -30,6 +30,12 @@ VALID_TRANSITIONS: dict[TransactionState, set[TransactionState]] = {
     TransactionState.cancelled: set(),
     TransactionState.refunded: set(),
 }
+TERMINAL_STATES = frozenset({
+    TransactionState.succeeded,
+    TransactionState.failed,
+    TransactionState.cancelled,
+    TransactionState.refunded,
+})
 
 
 def period_start(period: LimitPeriod, now: datetime) -> datetime:
@@ -173,6 +179,13 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
     transaction.settled_amount = provider_payment.settled_amount
     transaction.fee_amount = provider_payment.fee_amount
     await append_event(session, transaction, "provider.payment_created", provider_payment.state, payload=provider_payment.payload)
+    # Some providers reject a payment immediately instead of first creating a
+    # pending one.  That is a terminal result too, so it must start the same
+    # route pause as a terminal status received later via webhook or polling.
+    if provider_payment.state in TERMINAL_STATES:
+        await RoutingService.schedule_post_terminal_cooldown(
+            session, transaction.project_id, transaction.provider_id, datetime.now(UTC),
+        )
     return transaction
 
 
@@ -184,10 +197,7 @@ async def apply_provider_update(session: AsyncSession, transaction: Transaction,
     transaction.fee_amount = payment.fee_amount
     if payment.state != transaction.state:
         await append_event(session, transaction, "provider.status_changed", payment.state, payload=payment.payload)
-        if payment.state in (
-            TransactionState.succeeded, TransactionState.failed,
-            TransactionState.cancelled, TransactionState.refunded,
-        ):
+        if payment.state in TERMINAL_STATES:
             await RoutingService.schedule_post_terminal_cooldown(
                 session, transaction.project_id, transaction.provider_id, datetime.now(UTC),
             )

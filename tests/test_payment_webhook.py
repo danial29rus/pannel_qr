@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.db.models import TransactionState
+from app.api.schemas import TransactionCreate
 from app.payments.adapters.base import ProviderPayment
 from app.payments.service import PaymentService
 import app.payments.service as payment_service
@@ -70,3 +71,37 @@ async def test_webhook_rolls_back_read_transaction_before_provider_status_check(
 
     assert events.index("rollback") < events.index("provider_status")
     assert transaction.state is TransactionState.succeeded
+
+
+@pytest.mark.asyncio
+async def test_immediate_provider_failure_starts_route_cooldown(monkeypatch):
+    provider = SimpleNamespace(
+        id="provider-1", adapter_type="demo", settings={}, credentials_encrypted={},
+    )
+
+    class Adapter:
+        async def create_payment(self, _request):
+            return ProviderPayment(
+                external_id="external-1", state=TransactionState.failed,
+                payload={"error": {"message": "QR unavailable"}},
+            )
+
+    monkeypatch.setattr(payment_service.ProjectDAO, "get_for_update", AsyncMock(return_value=SimpleNamespace(is_active=True)))
+    monkeypatch.setattr(payment_service.TransactionDAO, "get_by_idempotency", AsyncMock(return_value=None))
+    monkeypatch.setattr(payment_service.TransactionDAO, "create", AsyncMock())
+    monkeypatch.setattr(payment_service.ProviderRequestAttemptDAO, "append", AsyncMock())
+    monkeypatch.setattr(payment_service.TransactionEventDAO, "append", AsyncMock())
+    monkeypatch.setattr(payment_service.RoutingService, "resolve_provider", AsyncMock(return_value=provider))
+    monkeypatch.setattr(payment_service.RoutingService, "schedule_post_terminal_cooldown", AsyncMock())
+    monkeypatch.setattr(payment_service.OperationalPolicyService, "assert_allows", AsyncMock())
+    monkeypatch.setattr(payment_service, "assert_limits", AsyncMock())
+    monkeypatch.setattr(payment_service.registry, "get", lambda *_: Adapter())
+
+    transaction = await payment_service.create_transaction(
+        SimpleNamespace(),
+        TransactionCreate(project_id="00000000-0000-0000-0000-000000000001", amount=Decimal("50"), currency="RUB"),
+        "immediately-failed-payment",
+    )
+
+    assert transaction.state is TransactionState.failed
+    payment_service.RoutingService.schedule_post_terminal_cooldown.assert_awaited_once()
