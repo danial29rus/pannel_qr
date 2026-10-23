@@ -38,6 +38,17 @@ TERMINAL_STATES = frozenset({
 })
 
 
+def is_sbp_qr_unavailable(provider_payment: ProviderPayment) -> bool:
+    """Whether the provider could not supply the required direct NSPK QR URL.
+
+    Adapters normally return this condition as ``failed``.  Keep the routing
+    safeguard independent of that status too: a provider response with this
+    error must never leave the route accepting requests in a tight retry loop.
+    """
+    error = (provider_payment.payload or {}).get("error")
+    return isinstance(error, dict) and error.get("code") == "sbp_qr_unavailable"
+
+
 def period_start(period: LimitPeriod, now: datetime) -> datetime:
     now = now.astimezone(UTC)
     if period == LimitPeriod.daily:
@@ -182,7 +193,9 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
     # Some providers reject a payment immediately instead of first creating a
     # pending one.  That is a terminal result too, so it must start the same
     # route pause as a terminal status received later via webhook or polling.
-    if provider_payment.state in TERMINAL_STATES:
+    # An unavailable NSPK QR link gets the same protection even if a provider
+    # incorrectly labels its response as pending.
+    if provider_payment.state in TERMINAL_STATES or is_sbp_qr_unavailable(provider_payment):
         await RoutingService.schedule_post_terminal_cooldown(
             session, transaction.project_id, transaction.provider_id, datetime.now(UTC),
         )

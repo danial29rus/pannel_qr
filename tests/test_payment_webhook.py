@@ -105,3 +105,37 @@ async def test_immediate_provider_failure_starts_route_cooldown(monkeypatch):
 
     assert transaction.state is TransactionState.failed
     payment_service.RoutingService.schedule_post_terminal_cooldown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_nspk_qr_starts_route_cooldown_even_with_pending_provider_status(monkeypatch):
+    provider = SimpleNamespace(
+        id="provider-1", adapter_type="demo", settings={}, credentials_encrypted={},
+    )
+
+    class Adapter:
+        async def create_payment(self, _request):
+            return ProviderPayment(
+                external_id="external-qr-1", state=TransactionState.pending,
+                payload={"error": {"code": "sbp_qr_unavailable", "message": "QR unavailable"}},
+            )
+
+    monkeypatch.setattr(payment_service.ProjectDAO, "get_for_update", AsyncMock(return_value=SimpleNamespace(is_active=True)))
+    monkeypatch.setattr(payment_service.TransactionDAO, "get_by_idempotency", AsyncMock(return_value=None))
+    monkeypatch.setattr(payment_service.TransactionDAO, "create", AsyncMock())
+    monkeypatch.setattr(payment_service.ProviderRequestAttemptDAO, "append", AsyncMock())
+    monkeypatch.setattr(payment_service.TransactionEventDAO, "append", AsyncMock())
+    monkeypatch.setattr(payment_service.RoutingService, "resolve_provider", AsyncMock(return_value=provider))
+    cooldown = AsyncMock()
+    monkeypatch.setattr(payment_service.RoutingService, "schedule_post_terminal_cooldown", cooldown)
+    monkeypatch.setattr(payment_service.OperationalPolicyService, "assert_allows", AsyncMock())
+    monkeypatch.setattr(payment_service, "assert_limits", AsyncMock())
+    monkeypatch.setattr(payment_service.registry, "get", lambda *_: Adapter())
+
+    await payment_service.create_transaction(
+        SimpleNamespace(),
+        TransactionCreate(project_id="00000000-0000-0000-0000-000000000001", amount=Decimal("50"), currency="RUB"),
+        "unavailable-nspk-qr",
+    )
+
+    cooldown.assert_awaited_once()
