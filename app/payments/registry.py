@@ -2,6 +2,7 @@ from app.payments.adapters.aipay import AIPayAdapter
 from app.payments.adapters.base import PaymentAdapter
 from app.payments.adapters.demo import DemoProcessorAdapter
 from app.payments.adapters.mulenpay import MulenPayAdapter
+from app.payments.adapters.nova import NovaAdapter
 
 
 class AdapterRegistry:
@@ -13,6 +14,8 @@ class AdapterRegistry:
             return MulenPayAdapter(config or {})
         if adapter_type == "aipay":
             return AIPayAdapter(config or {})
+        if adapter_type == "nova":
+            return NovaAdapter(config or {})
         try:
             return self._adapters[adapter_type]
         except KeyError as exc:

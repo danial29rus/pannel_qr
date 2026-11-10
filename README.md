@@ -131,9 +131,22 @@ For a PayGateCore-compatible merchant QR request, call `POST /api/v1/transaction
 }
 ```
 
-The endpoint resolves the project from the token, selects one random active buyer with an email from the panel pool, creates the payment through the project's configured route, and returns the QR `payment_url`. Reusing the same `merchant_transaction_id` is idempotent.
+The endpoint resolves the project from the token, selects one random active buyer with an email from the panel pool, creates the payment through the project's configured route, and returns the direct NSPK QR `payment_url`. Reusing the same `merchant_transaction_id` is idempotent.
 
 The processor documentation was not attached yet, so the actual external calls are intentionally represented by `DemoProcessorAdapter`. Replace it with an adapter in `app/payments/adapters/` and register it in `app/payments/registry.py`. The adapter must implement `create_payment`, `get_payment`, `parse_webhook`, and `verify_webhook`; all provider credentials stay in the `payment_providers` configuration, preferably encrypted by the deployment secret manager.
+
+### Nova AI test provider
+
+Create a provider with `adapter_type: "nova"`. Put the Nova API token in `credentials_encrypted`, not `settings`:
+
+```json
+{
+  "credentials_encrypted": {"token": "NOVA_TOKEN"},
+  "settings": {"user_id": 1}
+}
+```
+
+For a merchant QR request, the incoming `merchant_transaction_id` must be a UUID. It is passed to Nova unchanged as `transaction_id`; the panel returns Nova's direct `qr_url` when it is available. If Nova only returns a supported `go.pay.hot` checkout URL, the adapter reads its PayHot checkout session with the fragment token and returns `next_action.value` when it is a direct NSPK QR URL. Nova payments are checked by the existing background poller. `user_id: 1` is a temporary test recipient: every successful payment credits that Nova account.
 
 Before enabling a real processor, decide its authentication, signature scheme, currencies, payout/refund states, and whether a limit is reserved at creation or only at success. These are supported at the domain boundary, but need the provider's actual contract.
 
