@@ -24,9 +24,15 @@ class NovaAdapter:
     PAYHOT_QR_RETRY_DELAY_SECONDS = 0.5
 
     STATES = {
-        "pending": TransactionState.pending,
+        # A direct QR has already been handed to the merchant by the time a
+        # Nova payment is created, so it is actively being processed rather
+        # than merely waiting for a payment method to be selected.
+        "pending": TransactionState.processing,
         "succeeded": TransactionState.succeeded,
-        "failed": TransactionState.failed,
+        # PayHot/Nova report a user-aborted QR checkout as `failed`. The
+        # merchant-facing contract treats both non-payment outcomes as a
+        # cancellation rather than a processing error.
+        "failed": TransactionState.cancelled,
         "canceled": TransactionState.cancelled,
     }
 

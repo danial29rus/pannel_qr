@@ -66,7 +66,7 @@ async def test_create_uses_merchant_uuid_and_prefers_direct_qr(monkeypatch):
     method, called_url, headers, body = client.calls[0]
     assert (method, called_url, headers["Authorization"]) == ("POST", url, "Bearer secret")
     assert body == {"transaction_id": transaction_id, "user_id": 1, "amount_rub": 500}
-    assert (payment.external_id, payment.state, payment.payload["payment_url"]) == (transaction_id, TransactionState.pending, "https://qr.nspk.ru/NOVA")
+    assert (payment.external_id, payment.state, payment.payload["payment_url"]) == (transaction_id, TransactionState.processing, "https://qr.nspk.ru/NOVA")
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ async def test_create_reads_qr_from_payhot_when_nova_has_no_qr(monkeypatch):
 
     payment = await NovaAdapter({"token": "secret"}).create_payment(request())
 
-    assert payment.state == TransactionState.pending
+    assert payment.state == TransactionState.processing
     assert payment.payload["payment_url"] == "https://qr.nspk.ru/NOVA-PAYHOT"
     assert client.calls[1][2]["X-Payhot-Checkout-Token"] == token
 
