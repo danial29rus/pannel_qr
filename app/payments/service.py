@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -22,6 +23,7 @@ from app.services.routing import MOSCOW, RoutingService, start_of_day, start_of_
 from app.services.external_platform import ExternalPlatformService
 
 LIMIT_COUNTED_STATES = (TransactionState.created, TransactionState.pending, TransactionState.processing, TransactionState.succeeded)
+logger = logging.getLogger(__name__)
 VALID_TRANSITIONS: dict[TransactionState, set[TransactionState]] = {
     TransactionState.created: {TransactionState.pending, TransactionState.processing, TransactionState.failed, TransactionState.cancelled},
     TransactionState.pending: {TransactionState.processing, TransactionState.succeeded, TransactionState.failed, TransactionState.cancelled},
@@ -187,7 +189,9 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
             break
         except RetryableProviderError as exc:
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="retryable_error", request_payload={"reference": request.reference}, response_payload=None, http_status=exc.status_code, error=str(exc)))
-            if attempt == max_attempts: raise HTTPException(status_code=503, detail="Payment provider unavailable after retries") from exc
+            if attempt == max_attempts:
+                logger.warning("Payment provider create failed after retries for %s: %s", idempotency_key, exc)
+                raise HTTPException(status_code=503, detail="Payment provider unavailable after retries") from exc
             await asyncio.sleep(min(2 ** (attempt - 1), 4))
         except httpx.HTTPStatusError as exc:
             # A 4xx is a rejected provider request (credentials, Shop ID or

@@ -41,7 +41,10 @@ def request_json(url: str, method: str, body: bytes, token: str, secret: str) ->
             payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+        server = exc.headers.get("Server", "")
+        content_type = exc.headers.get("Content-Type", "")
+        metadata = f" (server={server}, content-type={content_type})" if server or content_type else ""
+        raise RuntimeError(f"HTTP {exc.code}{metadata}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError(f"Request failed: {exc}") from exc
     if not isinstance(payload, dict):
@@ -85,6 +88,7 @@ def main() -> int:
     }
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     print(f"Transaction UUID: {transaction_id}", flush=True)
+    print(f"POST {args.url}", flush=True)
     print("Creating payment…", flush=True)
     try:
         payment = request_json(args.url, "POST", body, token, secret)

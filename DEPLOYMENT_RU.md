@@ -104,7 +104,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail
 curl -fsS http://127.0.0.1:18180/ready
 ```
 
-Если меняли `API_BIND_PORT`, используйте свой порт. Затем откройте `https://panel-trader.workkit-studio.ru` и войдите с логином `PANEL_ADMIN_USERNAME` и заданным паролем. Проверьте вход/выход, создание пользователя и проекта, фильтры журнала и выбор недели. Пустые отчёты на новой базе ожидаемы.
+Если меняли `API_BIND_PORT`, используйте свой порт. Затем откройте `https://panel.<домен-витрины>` и войдите с логином `PANEL_ADMIN_USERNAME` и заданным паролем. Проверьте вход/выход, создание пользователя и проекта, фильтры журнала и выбор недели. Пустые отчёты на новой базе ожидаемы.
 
 `/health` показывает, что API жив; `/ready` дополнительно проверяет доступность PostgreSQL. Docker healthcheck использует `/ready`. Healthcheck сам не перезапускает зависший процесс — статус необходимо контролировать мониторингом.
 
@@ -114,7 +114,7 @@ curl -fsS http://127.0.0.1:18180/ready
 
 Для резервного контура нужны отдельные ключи провайдеров, входящие токены и webhook-настройки. **Не заменяйте webhook основного магазина на резервный домен:** некоторые провайдеры допускают только один адрес уведомлений. Если отдельных настроек нет, сначала согласуйте схему переключения с провайдером.
 
-Webhook нового подключения: `https://panel-trader.workkit-studio.ru/api/v1/webhooks/КОД_ПРОВАЙДЕРА`. Входящий QR API: `https://panel-trader.workkit-studio.ru/api/v1/transactions/qr`. Callback проекта указывает на получателя статусов вашей интеграции.
+Webhook нового подключения: `https://panel.<домен-витрины>/api/v1/webhooks/КОД_ПРОВАЙДЕРА`. Legacy входящий NSPK QR API: `https://panel.<домен-витрины>/api/v1/transactions/qr`. Для потока партнёр → авто-email → API Витрины используйте новый signed endpoint; настройка и контракт описаны в [`INTEGRATION_VITRINA_RU.md`](INTEGRATION_VITRINA_RU.md).
 
 Чтобы включить фоновую проверку платежей и повторную доставку callback, задайте `COMPOSE_PROFILES=processing` в `.env.production` и выполните:
 

@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 import time
 from decimal import Decimal, InvalidOperation
@@ -18,6 +19,7 @@ _VARIABLE = re.compile(r"^\{\{([a-z_]+)\}\}$")
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _ALLOWED_VARIABLES = {"transaction_id", "email", "amount", "amount_rub", "currency", "description", "api_token", "secret_key"}
 _TERMINAL_STATES = {state.value: state for state in TransactionState}
+logger = logging.getLogger(__name__)
 
 
 def _path_value(data: dict, path: str):
@@ -240,7 +242,20 @@ class JsonApiAdapter:
         if self.extract_sbp_qr and not qr_url:
             extracted_url, sbp_result = await MulenPayAdapter.get_sbp_url(hosted_payment_url)
             if not self._is_direct_nspk_url(extracted_url):
-                raise RetryableProviderError("Provider checkout did not produce a direct https://qr.nspk.ru/ link", 503)
+                attempts = (sbp_result or {}).get("failed_attempts") or [sbp_result or {}]
+                summary = []
+                for item in attempts:
+                    if item.get("status_code") is not None:
+                        summary.append(f"HTTP {item['status_code']}")
+                    elif item.get("error"):
+                        summary.append(str(item["error"])[:120])
+                    else:
+                        summary.append("SBP response contained no direct QR URL")
+                detail = "; ".join(summary) or "SBP response contained no direct QR URL"
+                logger.warning("MulenPay NSPK extraction failed for transaction %s: %s", request.reference, detail)
+                raise RetryableProviderError(
+                    f"Provider checkout did not produce a direct https://qr.nspk.ru/ link ({detail})", 503,
+                )
             qr_url = extracted_url
         if request.extra.get("_require_direct_qr") and not qr_url:
             raise RetryableProviderError("Provider did not return a direct https://qr.nspk.ru/ link", 503)

@@ -359,10 +359,13 @@ class TransactionDAO:
 
     @staticmethod
     async def list_requiring_merchant_callback(session: AsyncSession, limit: int = 200) -> list[uuid.UUID]:
-        """Terminal direct-API payments whose merchant callback did not succeed."""
+        """Terminal direct and signed external API payments awaiting merchant callback."""
         return list((await session.scalars(
             select(Transaction.id).where(
-                Transaction.idempotency_key.like("merchant-qr:%"),
+                or_(
+                    Transaction.idempotency_key.like("merchant-qr:%"),
+                    Transaction.idempotency_key.like("external-api:%"),
+                ),
                 Transaction.state.in_((
                     TransactionState.succeeded, TransactionState.failed,
                     TransactionState.cancelled, TransactionState.refunded,

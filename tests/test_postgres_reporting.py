@@ -93,6 +93,15 @@ async def test_real_postgres_reporting_filters_and_api_validation():
                         assert response.json()["total"] == 1
                 finally:
                     app.dependency_overrides.clear()
+                external_api_payment = payment(
+                    start, "100", TransactionState.succeeded,
+                    extra={"merchant_transaction_id": str(uuid.uuid4()), "_signed_external_api": True},
+                )
+                external_api_payment.idempotency_key = f"external-api:{uuid.uuid4()}"
+                session.add(external_api_payment)
+                await session.flush()
+                callbacks = await TransactionDAO.list_requiring_merchant_callback(session)
+                assert external_api_payment.id in callbacks
             await tx.rollback()
     finally:
         await engine.dispose()
