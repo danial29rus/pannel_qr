@@ -325,6 +325,20 @@ class IntegrationRequestLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ExternalPaymentRequest(Base):
+    """Durable idempotency reservation made before calling a remote payment API."""
+    __tablename__ = "external_payment_requests"
+    __table_args__ = (UniqueConstraint("project_id", "transaction_id", name="uq_external_payment_project_transaction"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    currency: Mapped[str] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ExternalCallbackAttempt(Base):
     """Every final-status delivery attempt to the external platform."""
     __tablename__ = "external_callback_attempts"

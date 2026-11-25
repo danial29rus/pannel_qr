@@ -94,7 +94,7 @@ class ProjectCommissionUpdate(BaseModel):
 
 
 class ExternalPlatformConfigUpdate(BaseModel):
-    external_callback_url: str = Field(min_length=8, max_length=2048, pattern=r"^https://")
+    external_callback_url: str | None = Field(default=None, min_length=8, max_length=2048, pattern=r"^https://")
     external_incoming_token: str = Field(min_length=16, max_length=512)
     external_callback_secret: str = Field(min_length=16, max_length=512)
     status_check_interval_seconds: int = Field(default=30, ge=10, le=3600)
@@ -445,6 +445,23 @@ class ExternalOrderResponse(BaseModel):
     transaction_id: uuid.UUID | None
     status: str
     payment_url: str | None
+
+
+class ExternalPaymentCreate(BaseModel):
+    transaction_id: uuid.UUID
+    amount_rub: int = Field(ge=100, le=500_000)
+    description: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class ExternalPaymentResponse(BaseModel):
+    transaction_id: uuid.UUID
+    status: str
+    paid: bool
+    amount_rub: int
+    currency: str = "RUB"
+    payment_url: str | None
+    qr_url: str | None
+    expires_at: datetime
 
 
 class MerchantQrPaymentCreate(BaseModel):

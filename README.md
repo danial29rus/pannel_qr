@@ -21,7 +21,7 @@ On the new server, fill `.env.production` from `.env.production.example`, then r
 
 Do not apply the reserve example env to the existing installation: changing `COMPOSE_PROJECT_NAME` selects a different PostgreSQL volume. Keep the existing server's settings, DNS and provider webhooks unchanged. A reserve deployment is independent; automatic failover and database replication are not configured.
 
-See [HonestPlay connection instructions](INTEGRATION_HONESTPLAY_RU.md) for the partner adapter, durable UUID retries, polling, and hosted checkout limitations.
+See [Vitrina partner integration](INTEGRATION_VITRINA_RU.md) for the generic JSON API adapter, two-key partner authentication, email-pool selection, hosted checkout, status polling, and callback signatures.
 
 ## What is already included
 

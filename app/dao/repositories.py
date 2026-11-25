@@ -8,7 +8,7 @@ from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
-    CatalogSource, ExternalCallbackAttempt, IntegrationRequestLog, Limit, Order, PaymentProvider, Product, Project, ProjectOperationalPolicy, ProjectProviderRoute, ProviderRequestAttempt,
+    CatalogSource, ExternalCallbackAttempt, ExternalPaymentRequest, IntegrationRequestLog, Limit, Order, PaymentProvider, Product, Project, ProjectOperationalPolicy, ProjectProviderRoute, ProviderRequestAttempt,
     SupportConversation, SupportMessage, Transaction, TransactionDirection, TransactionEvent, TransactionState, User,
 )
 
@@ -112,6 +112,7 @@ class ProjectDAO:
     async def get_for_update(session: AsyncSession, project_id: uuid.UUID) -> Project | None:
         return await session.scalar(select(Project).where(Project.id == project_id).with_for_update())
 
+
     @staticmethod
     async def list(session: AsyncSession) -> list[Project]:
         return list((await session.scalars(select(Project).order_by(Project.created_at.desc()))).all())
@@ -120,6 +121,21 @@ class ProjectDAO:
     async def save(session: AsyncSession, project: Project) -> Project:
         await session.flush()
         return project
+
+
+class ExternalPaymentRequestDAO:
+    @staticmethod
+    async def get(session: AsyncSession, project_id: uuid.UUID, transaction_id: uuid.UUID) -> ExternalPaymentRequest | None:
+        return await session.scalar(select(ExternalPaymentRequest).where(
+            ExternalPaymentRequest.project_id == project_id,
+            ExternalPaymentRequest.transaction_id == transaction_id,
+        ).with_for_update())
+
+    @staticmethod
+    async def create(session: AsyncSession, request: ExternalPaymentRequest) -> ExternalPaymentRequest:
+        session.add(request)
+        await session.flush()
+        return request
 
 
 class ProviderDAO:

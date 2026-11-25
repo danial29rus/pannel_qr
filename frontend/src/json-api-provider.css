@@ -1,0 +1,19 @@
+.json-api-setup { margin-bottom: 18px; }
+.json-api-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.json-api-heading h3 { margin: 0 0 6px; }
+.json-api-heading p, .json-api-note { color: var(--muted, #98a3b8); line-height: 1.5; }
+.json-api-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.json-api-fields label { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.json-api-fields input, .json-api-fields select, .json-api-fields textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.json-api-fields textarea { resize: vertical; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.json-api-fields small, .json-api-note { font-size: 12px; }
+.json-api-fields .json-editor { grid-column: 1 / -1; }
+.json-api-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.json-api-note { margin: 16px 0 0; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .json-api-heading { display: grid; }
+  .json-api-fields { grid-template-columns: minmax(0, 1fr); }
+  .json-api-fields .json-editor, .json-api-actions { grid-column: auto; }
+  .json-api-actions button { width: 100%; min-height: 46px; }
+}

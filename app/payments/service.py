@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -8,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import MerchantQrPaymentCreate, PaymentTraceCustomer, PaymentTraceEntry, TransactionCreate, TransactionListItem, TransactionPage, TransactionTrace
 from app.dao.repositories import (
-    ExternalCallbackAttemptDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
+    ExternalCallbackAttemptDAO, ExternalPaymentRequestDAO, IntegrationRequestLogDAO, LimitDAO, OrderDAO,
     ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO,
     TransactionEventDAO, UserDAO,
 )
-from app.db.models import LimitPeriod, ProviderRequestAttempt, Transaction, TransactionEvent, TransactionState
+from app.db.models import ExternalPaymentRequest, LimitPeriod, ProviderRequestAttempt, Transaction, TransactionEvent, TransactionState
 from app.payments.adapters.base import RetryableProviderError
 from app.payments.adapters.base import CreatePaymentRequest, ProviderPayment
 from app.payments.registry import registry
@@ -236,25 +237,29 @@ class PaymentService:
 
     @staticmethod
     def _merchant_qr_transaction_payload(
-        project_id, buyer_id, payload: MerchantQrPaymentCreate,
+        project_id, buyer_id, payload: MerchantQrPaymentCreate, *, direct_qr: bool = True, signed_external_api: bool = False,
     ) -> TransactionCreate:
         """Translate the merchant contract into the internal payment command."""
+        extra = {
+            "merchant_transaction_id": payload.merchant_transaction_id,
+            "merchant_webhook_url": payload.webhook_url,
+            "website_url": payload.return_url,
+            "auto_amount_step": payload.auto_amount_step,
+            "auto_amount_limit": payload.auto_amount_limit,
+            "hold_time_seconds": payload.hold_time_seconds,
+            "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
+        }
+        if direct_qr:
+            extra["_require_direct_qr"] = True
+        if signed_external_api:
+            extra["_signed_external_api"] = True
         return TransactionCreate(
             project_id=project_id,
             user_id=buyer_id,
             amount=payload.amount,
             currency=payload.currency,
             description=payload.description or f"QR payment {payload.merchant_transaction_id}",
-            extra={
-                "_require_direct_qr": True,
-                "merchant_transaction_id": payload.merchant_transaction_id,
-                "merchant_webhook_url": payload.webhook_url,
-                "website_url": payload.return_url,
-                "auto_amount_step": payload.auto_amount_step,
-                "auto_amount_limit": payload.auto_amount_limit,
-                "hold_time_seconds": payload.hold_time_seconds,
-                "currency_rate": str(payload.currency_rate) if payload.currency_rate is not None else None,
-            },
+            extra=extra,
         )
 
     @staticmethod
@@ -292,6 +297,43 @@ class PaymentService:
                 )
         await session.refresh(transaction)
         return transaction
+
+    @staticmethod
+    async def create_external_platform_payment(
+        session: AsyncSession, project_id, payload: MerchantQrPaymentCreate,
+    ) -> Transaction:
+        """Create an idempotent hosted payment for the signed generic partner API."""
+        transaction_id = uuid.UUID(payload.merchant_transaction_id)
+        async with session.begin():
+            project = await ProjectDAO.get_for_update(session, project_id)
+            if not project or not project.is_active:
+                raise HTTPException(status_code=404, detail="Active project not found")
+            reservation = await ExternalPaymentRequestDAO.get(session, project_id, transaction_id)
+            if reservation and (
+                reservation.amount != payload.amount or reservation.currency.upper() != payload.currency.upper()
+            ):
+                raise HTTPException(status_code=409, detail="transaction_id was already used with a different amount")
+            if not reservation:
+                buyer = await UserDAO.random_active_with_email(session)
+                if not buyer:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="No active buyer with an email is available in the user pool",
+                    )
+                reservation = await ExternalPaymentRequestDAO.create(session, ExternalPaymentRequest(
+                    project_id=project_id,
+                    transaction_id=transaction_id,
+                    user_id=buyer.id,
+                    amount=payload.amount,
+                    currency=payload.currency.upper(),
+                ))
+
+        internal_payload = PaymentService._merchant_qr_transaction_payload(
+            project_id, reservation.user_id, payload, direct_qr=False, signed_external_api=True,
+        )
+        return await PaymentService.create(
+            session, internal_payload, f"external-api:{transaction_id}",
+        )
 
     @staticmethod
     async def process_webhook(session: AsyncSession, provider_code: str, body: bytes, headers: dict[str, str]) -> None:

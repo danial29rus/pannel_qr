@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
-    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, MerchantQrPaymentCreate, MerchantQrPaymentResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
+    CatalogSourceActivationUpdate, CatalogSourceCreate, CatalogSourceRead, CatalogSyncResult, DashboardSummary, ExternalOrderCreate, ExternalOrderResponse, ExternalPaymentCreate, ExternalPaymentResponse, ExternalPlatformConfigUpdate, LimitCreate, LimitRead, LoginRequest, LoginResponse, MerchantQrPaymentCreate, MerchantQrPaymentResponse, OperationalPolicyRead, OperationalPolicyUpsert, ProjectActivationUpdate, ProjectCommissionUpdate, ProjectCreate, ProjectRead, ProviderCommissionUpdate, ProviderCreate, ProviderRead, ProviderRouteActivationUpdate, ProviderRouteCreate, ProviderRouteRead, ProviderRouteUpdate, ProjectRoutingAnalytics,
     OrderCreate, OrderRead, ProductCreate, ProductRead, SupportConversationCreate, SupportConversationRead, SupportMessageCreate, SupportMessageRead, TransactionCreate, TransactionListItem, TransactionPage, TransactionRead, TransactionTrace, UserCreate, UserEmailImport, UserImportResult, UserPage, UserRead, UserUpdate,
 )
 from app.db.session import get_session
@@ -22,6 +22,7 @@ from app.services.routing_analytics import RoutingAnalyticsService
 from app.services.orders import OrderService
 from app.services.catalog_sync import CatalogSyncService
 from app.services.external_platform import ExternalPlatformService
+from app.dao.repositories import TransactionDAO
 from app.api.auth import login
 
 router = APIRouter()
@@ -193,6 +194,92 @@ async def accept_external_order(project_key: str, payload: ExternalOrderCreate, 
             response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
         )
         raise
+
+
+def _partner_status(transaction_state: TransactionState) -> tuple[str, bool]:
+    if transaction_state == TransactionState.succeeded:
+        return "paid", True
+    if transaction_state == TransactionState.failed:
+        return "failed", False
+    if transaction_state == TransactionState.cancelled:
+        return "canceled", False
+    if transaction_state == TransactionState.refunded:
+        return "refunded", False
+    return "pending", False
+
+
+def _external_payment_response(transaction, transaction_id: uuid.UUID, expiry_minutes: int) -> ExternalPaymentResponse:
+    status_name, paid = _partner_status(transaction.state)
+    raw = transaction.raw_provider_payload or {}
+    return ExternalPaymentResponse(
+        transaction_id=transaction_id,
+        status=status_name,
+        paid=paid,
+        amount_rub=int(transaction.amount),
+        payment_url=transaction.payment_url,
+        qr_url=raw.get("qr_url") or transaction.payment_url,
+        expires_at=transaction.created_at + timedelta(minutes=expiry_minutes),
+    )
+
+
+@router.post("/external/{project_key}/payments", response_model=ExternalPaymentResponse, status_code=status.HTTP_201_CREATED)
+async def accept_external_payment(
+    project_key: str, payload: ExternalPaymentCreate, request: Request, session: AsyncSession = Depends(get_session),
+):
+    """Partner API: select a pooled email and create checkout through project routing."""
+    token = request.headers.get("x-platform-token")
+    authorization = request.headers.get("authorization", "")
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+    raw_body = await request.body()
+    project = await ExternalPlatformService.project_for_signed_payment_request(
+        session, project_key, token, request.headers.get("x-platform-timestamp"),
+        request.headers.get("x-platform-signature"), request.method, request.url.path, raw_body,
+    )
+    project_id = project.id
+    callback_url = project.external_callback_url
+    expiry_minutes = project.payment_expiry_minutes
+    await session.rollback()
+    merchant_payload = MerchantQrPaymentCreate(
+        amount=payload.amount_rub,
+        currency="RUB",
+        merchant_transaction_id=str(payload.transaction_id),
+        webhook_url=callback_url,
+        description=payload.description,
+    )
+    request_payload = payload.model_dump(mode="json")
+    try:
+        transaction = await PaymentService.create_external_platform_payment(session, project_id, merchant_payload)
+        response = _external_payment_response(transaction, payload.transaction_id, expiry_minutes)
+        await ExternalPlatformService.log_request(
+            session, project_id, str(payload.transaction_id), request_payload, outcome="accepted", http_status=201,
+            response_payload=response.model_dump(mode="json"),
+        )
+        return response
+    except HTTPException as exc:
+        await ExternalPlatformService.log_request(
+            session, project_id, str(payload.transaction_id), request_payload, outcome="rejected", http_status=exc.status_code,
+            response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
+        )
+        raise
+
+
+@router.get("/external/{project_key}/payments/{transaction_id}", response_model=ExternalPaymentResponse)
+async def get_external_payment_status(
+    project_key: str, transaction_id: uuid.UUID, request: Request, session: AsyncSession = Depends(get_session),
+):
+    token = request.headers.get("x-platform-token")
+    authorization = request.headers.get("authorization", "")
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+    project = await ExternalPlatformService.project_for_signed_payment_request(
+        session, project_key, token, request.headers.get("x-platform-timestamp"),
+        request.headers.get("x-platform-signature"), request.method, request.url.path, b"",
+    )
+    transaction = await TransactionDAO.get_by_idempotency(session, project.id, f"external-api:{transaction_id}")
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return _external_payment_response(transaction, transaction_id, project.payment_expiry_minutes)
 
 
 @router.post("/transactions/qr", response_model=MerchantQrPaymentResponse, status_code=status.HTTP_201_CREATED)

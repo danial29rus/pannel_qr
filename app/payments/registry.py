@@ -4,6 +4,7 @@ from app.payments.adapters.demo import DemoProcessorAdapter
 from app.payments.adapters.mulenpay import MulenPayAdapter
 from app.payments.adapters.nova import NovaAdapter
 from app.payments.adapters.honestplay import HonestPlayAdapter
+from app.payments.adapters.json_api import JsonApiAdapter
 
 
 class AdapterRegistry:
@@ -13,6 +14,8 @@ class AdapterRegistry:
     def get(self, adapter_type: str, config: dict | None = None) -> PaymentAdapter:
         if adapter_type == "honestplay":
             return HonestPlayAdapter(config or {})
+        if adapter_type == "json_api":
+            return JsonApiAdapter(config or {})
         if adapter_type == "mulenpay":
             return MulenPayAdapter(config or {})
         if adapter_type == "aipay":

@@ -13,8 +13,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.api.schemas import TransactionState
-from app.dao.repositories import TransactionDAO
-from app.db.models import Project, PaymentProvider, Transaction, TransactionDirection, User
+from app.dao.repositories import ExternalPaymentRequestDAO, TransactionDAO
+from app.db.models import ExternalPaymentRequest, Project, PaymentProvider, Transaction, TransactionDirection, User
 from app.db.session import get_session
 from app.main import app
 from app.services.dashboard import DashboardService
@@ -150,6 +150,42 @@ async def test_honestplay_retry_after_rollback_keeps_remote_uuid(monkeypatch):
                     await PaymentService.create(session, payload.model_copy(update={"extra":{"_require_direct_qr":True}}), str(uuid.uuid4()))
                 assert direct_qr.value.status_code == 422
                 assert len(calls) == 2
+            await outer.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_external_payment_reservation_persists_selected_user():
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Set TEST_DATABASE_URL to a disposable migrated PostgreSQL database")
+    engine = create_async_engine(url)
+    project_id = uuid.uuid4()
+    transaction_id = uuid.uuid4()
+    try:
+        async with engine.connect() as connection:
+            outer = await connection.begin()
+            async with AsyncSession(bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint") as session:
+                owner = User(full_name="Reservation owner", business_name="Test")
+                buyer = User(full_name="Pooled buyer", business_name="Test", email=f"{uuid.uuid4().hex}@example.test")
+                session.add_all([owner, buyer])
+                await session.flush()
+                project = Project(id=project_id, owner_id=owner.id, name="Reservation", external_key=uuid.uuid4().hex)
+                session.add(project)
+                await session.flush()
+                row = ExternalPaymentRequest(
+                    project_id=project.id, transaction_id=transaction_id, user_id=buyer.id,
+                    amount=Decimal("500"), currency="RUB",
+                )
+                await ExternalPaymentRequestDAO.create(session, row)
+                await session.commit()
+                loaded = await ExternalPaymentRequestDAO.get(session, project.id, transaction_id)
+                assert loaded is not None
+                assert loaded.user_id == buyer.id
+                assert loaded.amount == Decimal("500")
+                assert loaded.currency == "RUB"
+                await session.rollback()
             await outer.rollback()
     finally:
         await engine.dispose()

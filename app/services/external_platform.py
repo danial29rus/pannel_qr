@@ -34,7 +34,37 @@ PAYGATE_TERMINAL_STATUSES = {
 MAX_MERCHANT_CALLBACK_ATTEMPTS = 5
 
 
+def sign_external_platform_request(secret: str, timestamp: str, method: str, path: str, body: bytes) -> str:
+    body_hash = hashlib.sha256(body).hexdigest()
+    canonical = f"{timestamp}.{method.upper()}.{path}.{body_hash}".encode()
+    return hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+
+
 class ExternalPlatformService:
+    @staticmethod
+    async def project_for_signed_payment_request(
+        session: AsyncSession, external_key: str, token: str | None, timestamp: str | None,
+        signature: str | None, method: str, path: str, body: bytes,
+    ) -> Project:
+        project = await ProjectDAO.get_by_external_key(session, external_key)
+        if not project or not project.is_active:
+            raise HTTPException(status_code=404, detail="Active project not found")
+        if not project.external_incoming_token or not token or not hmac.compare_digest(project.external_incoming_token, token):
+            raise HTTPException(status_code=401, detail="Invalid external platform credentials")
+        secret = project.external_callback_secret
+        if not secret or not timestamp or not signature:
+            raise HTTPException(status_code=401, detail="Invalid external platform credentials")
+        try:
+            issued_at = int(timestamp)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Invalid external platform credentials") from exc
+        if abs(int(datetime.now(UTC).timestamp()) - issued_at) > 300:
+            raise HTTPException(status_code=401, detail="Expired external platform signature")
+        expected = sign_external_platform_request(secret, timestamp, method, path, body)
+        if not hmac.compare_digest(expected, signature.lower()):
+            raise HTTPException(status_code=401, detail="Invalid external platform signature")
+        return project
+
     @staticmethod
     async def project_for_request(session: AsyncSession, external_key: str, supplied_token: str | None) -> Project:
         project = await ProjectDAO.get_by_external_key(session, external_key)
@@ -164,12 +194,26 @@ class ExternalPlatformService:
             "status": status,
             "type": "in",
         }
+        signed_external_api = bool(transaction.extra.get("_signed_external_api"))
+        if signed_external_api:
+            callback_status = "canceled" if status == "cancelled" else status
+            payload = {
+                "transaction_id": transaction.extra["merchant_transaction_id"],
+                "status": callback_status,
+                "paid": status == "paid",
+                "amount_rub": int(paid_amount),
+                "currency": transaction.currency,
+                "payment_url": transaction.payment_url,
+            }
         raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if signed_external_api:
+            timestamp = str(int(datetime.now(UTC).timestamp()))
+            signature = hmac.new(project.external_callback_secret.encode(), f"{timestamp}.".encode() + raw, hashlib.sha256).hexdigest()
+            headers.update({"X-Panel-Timestamp": timestamp, "X-Panel-Signature": signature})
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.post(callback_url, content=raw, headers={
-                    "Content-Type": "application/json",
-                })
+                response = await client.post(callback_url, content=raw, headers=headers)
             try:
                 response_payload = response.json() if response.content and "json" in response.headers.get("content-type", "") else {"body": response.text[:1000]}
             except ValueError:
@@ -191,7 +235,7 @@ class ExternalPlatformService:
                 outcome="success" if successful else "retryable_error" if will_retry else "error", request_payload={
                     "method": "POST",
                     "url": callback_url,
-                    "headers": {"Content-Type": "application/json"},
+                    "headers": headers,
                     "body": payload,
                 },
                 response_payload=response_payload, http_status=response.status_code,
@@ -206,7 +250,7 @@ class ExternalPlatformService:
                 outcome="retryable_error" if will_retry else "error", request_payload={
                     "method": "POST",
                     "url": callback_url,
-                    "headers": {"Content-Type": "application/json"},
+                    "headers": headers,
                     "body": payload,
                 }, response_payload=None,
                 http_status=None,
