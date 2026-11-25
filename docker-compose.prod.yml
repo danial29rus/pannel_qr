@@ -46,10 +46,21 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/ready', timeout=6)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     ports:
       - "127.0.0.1:${API_BIND_PORT:-18180}:18080"
+    networks:
+      default: {}
+      proxy:
+        aliases: [panel-api]
 
   worker:
+    profiles: [processing]
     build: .
     restart: unless-stopped
     environment:
@@ -67,6 +78,15 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PANEL_BIND_PORT:-15174}:8080"
+    networks:
+      default: {}
+      proxy:
+        aliases: [panel-frontend]
 
 volumes:
   postgres_data:
+
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:-vitrina_proxy}
+    external: true
