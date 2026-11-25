@@ -329,7 +329,7 @@ class PaymentService:
                 ))
 
         internal_payload = PaymentService._merchant_qr_transaction_payload(
-            project_id, reservation.user_id, payload, direct_qr=False, signed_external_api=True,
+            project_id, reservation.user_id, payload, direct_qr=True, signed_external_api=True,
         )
         return await PaymentService.create(
             session, internal_payload, f"external-api:{transaction_id}",

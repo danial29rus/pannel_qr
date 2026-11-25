@@ -99,6 +99,12 @@ def main() -> int:
     print(f"Amount: {payment.get('amount_rub')} RUB")
     print(f"Payment URL: {payment_url or '(not returned)'}")
     print(f"QR URL: {qr_url or '(not returned)'}")
+    if payment.get("status") == "pending" and (
+        not isinstance(payment_url, str) or not payment_url.startswith("https://qr.nspk.ru/")
+        or not isinstance(qr_url, str) or not qr_url.startswith("https://qr.nspk.ru/")
+    ):
+        print("ERROR: pending payment did not return both direct https://qr.nspk.ru/ URLs", file=sys.stderr)
+        return 1
     checkout_url = payment_url or qr_url
     if not checkout_url:
         print("No checkout link was returned", file=sys.stderr)

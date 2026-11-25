@@ -11,6 +11,7 @@ import httpx
 
 from app.db.models import TransactionDirection, TransactionState
 from app.payments.adapters.base import CreatePaymentRequest, ProviderPayment, RetryableProviderError
+from app.payments.adapters.mulenpay import MulenPayAdapter
 
 
 _VARIABLE = re.compile(r"^\{\{([a-z_]+)\}\}$")
@@ -61,7 +62,7 @@ class JsonApiAdapter:
     """A declarative adapter; provider-specific request/response shapes live in config."""
 
     requires_customer_email = True
-    supports_direct_qr = False
+    supports_direct_qr = True
 
     def __init__(self, config: dict) -> None:
         self.base_url = str(config.get("base_url", "")).rstrip("/")
@@ -81,6 +82,7 @@ class JsonApiAdapter:
         })
         self.currency = str(config.get("currency", "RUB")).upper()
         self.amount_mode = str(config.get("amount_mode", "integer_major"))
+        self.extract_sbp_qr = bool(config.get("extract_sbp_qr", False))
         self.auth_header = str(config.get("auth_header", "Authorization"))
         self.auth_scheme = str(config.get("auth_scheme", "Bearer"))
         self.api_token = str(config.get("api_token", "")).strip()
@@ -136,8 +138,6 @@ class JsonApiAdapter:
             raise ValueError(f"JSON API supports incoming {self.currency} payments only")
         if not request.customer_email:
             raise ValueError("JSON API requires a selected user with an email")
-        if request.extra.get("_require_direct_qr"):
-            raise ValueError("JSON API returns hosted checkout links, not a direct NSPK QR URL")
         if self.amount_mode == "integer_major" and request.amount != request.amount.to_integral_value():
             raise ValueError("JSON API is configured for whole-unit amounts")
 
@@ -211,6 +211,10 @@ class JsonApiAdapter:
             raise RetryableProviderError("JSON API returned an invalid HTTPS payment_url")
         return value
 
+    @staticmethod
+    def _is_direct_nspk_url(value: object) -> bool:
+        return isinstance(value, str) and value.startswith("https://qr.nspk.ru/")
+
     async def create_payment(self, request: CreatePaymentRequest) -> ProviderPayment:
         self.validate_payment_request(request)
         body = _render(self.request_template, self._context(request))
@@ -226,19 +230,34 @@ class JsonApiAdapter:
         remote_currency = _path_value(payload, str(currency_path)) if currency_path else request.currency
         if str(remote_currency).upper() != request.currency.upper():
             raise RetryableProviderError("JSON API returned an unexpected currency")
-        payment_url = self._payment_url(payload)
+        hosted_payment_url = self._payment_url(payload)
         qr_path = self.response_paths.get("qr_url")
         qr_url = _path_value(payload, str(qr_path)) if qr_path else None
-        if qr_url is not None:
-            parsed = urlsplit(qr_url) if isinstance(qr_url, str) else None
-            if not parsed or parsed.scheme != "https" or not parsed.hostname:
-                qr_url = None
+        if not self._is_direct_nspk_url(qr_url):
+            qr_url = None
+        payment_url = hosted_payment_url
+        sbp_result = None
+        if self.extract_sbp_qr and not qr_url:
+            extracted_url, sbp_result = await MulenPayAdapter.get_sbp_url(hosted_payment_url)
+            if not self._is_direct_nspk_url(extracted_url):
+                raise RetryableProviderError("Provider checkout did not produce a direct https://qr.nspk.ru/ link", 503)
+            qr_url = extracted_url
+        if request.extra.get("_require_direct_qr") and not qr_url:
+            raise RetryableProviderError("Provider did not return a direct https://qr.nspk.ru/ link", 503)
+        if qr_url:
+            payment_url = qr_url
         return ProviderPayment(
             external_id=external_id,
             state=self._mapped_state(payload),
             amount=amount,
             currency=request.currency.upper(),
-            payload={"payment_url": payment_url, "qr_url": qr_url, "remote": payload},
+            payload={
+                "payment_url": payment_url,
+                "qr_url": qr_url,
+                "hosted_payment_url": hosted_payment_url,
+                "sbp": sbp_result,
+                "remote": payload,
+            },
         )
 
     async def get_payment(self, external_id: str) -> ProviderPayment:

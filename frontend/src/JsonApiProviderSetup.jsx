@@ -41,6 +41,7 @@ const emptyForm = () => ({
   timestamp_header: "",
   currency: "RUB",
   amount_mode: "integer_major",
+  extract_sbp_qr: true,
   request_template: JSON.stringify(VITRINA_PRESET.request_template, null, 2),
   response_paths: JSON.stringify(VITRINA_PRESET.response_paths, null, 2),
   status_map: JSON.stringify(VITRINA_PRESET.status_map, null, 2),
@@ -88,6 +89,7 @@ export default function JsonApiProviderSetup({ projectId, notice, onCreated }) {
         timestamp_header: form.timestamp_header,
         currency: form.currency,
         amount_mode: form.amount_mode,
+        extract_sbp_qr: form.extract_sbp_qr,
         request_template: parseObject(form.request_template, "Шаблон запроса"),
         response_paths: parseObject(form.response_paths, "Поля ответа"),
         status_map: parseObject(form.status_map, "Статусы"),
@@ -145,6 +147,7 @@ export default function JsonApiProviderSetup({ projectId, notice, onCreated }) {
       <label>Timestamp header<input value={form.timestamp_header} onChange={set("timestamp_header")}/></label>
       <label>Валюта<input required value={form.currency} onChange={set("currency")}/></label>
       <label>Формат суммы<select value={form.amount_mode} onChange={set("amount_mode")}><option value="integer_major">Целые единицы (amount_rub)</option><option value="decimal_major">Десятичные единицы</option></select></label>
+      <label className="json-api-checkbox"><input type="checkbox" checked={form.extract_sbp_qr} onChange={(event) => setForm((previous) => ({ ...previous, extract_sbp_qr: event.target.checked }))}/> Получать прямой NSPK URL из hosted checkout через endpoint провайдера `/sbp`</label>
       <label>Комиссия провайдера, %<input type="number" min="0" max="100" step="0.01" value={form.provider_fee_percent} onChange={set("provider_fee_percent")}/></label>
       <label className="json-editor">Шаблон JSON создания<textarea required rows="7" spellCheck="false" value={form.request_template} onChange={set("request_template")}/></label>
       <label className="json-editor">Пути полей ответа<textarea required rows="7" spellCheck="false" value={form.response_paths} onChange={set("response_paths")}/></label>

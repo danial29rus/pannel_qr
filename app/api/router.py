@@ -222,6 +222,10 @@ def _external_payment_response(transaction, transaction_id: uuid.UUID, expiry_mi
     )
 
 
+def _is_direct_nspk_url(value: str | None) -> bool:
+    return bool(value and value.startswith("https://qr.nspk.ru/"))
+
+
 @router.post("/external/{project_key}/payments", response_model=ExternalPaymentResponse, status_code=status.HTTP_201_CREATED)
 async def accept_external_payment(
     project_key: str, payload: ExternalPaymentCreate, request: Request, session: AsyncSession = Depends(get_session),
@@ -251,6 +255,10 @@ async def accept_external_payment(
     try:
         transaction = await PaymentService.create_external_platform_payment(session, project_id, merchant_payload)
         response = _external_payment_response(transaction, payload.transaction_id, expiry_minutes)
+        if transaction.state == TransactionState.pending and (
+            not _is_direct_nspk_url(response.payment_url) or not _is_direct_nspk_url(response.qr_url)
+        ):
+            raise HTTPException(status_code=502, detail="Provider did not return a direct NSPK QR URL")
         await ExternalPlatformService.log_request(
             session, project_id, str(payload.transaction_id), request_payload, outcome="accepted", http_status=201,
             response_payload=response.model_dump(mode="json"),

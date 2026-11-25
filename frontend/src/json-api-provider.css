@@ -8,6 +8,8 @@
 .json-api-fields textarea { resize: vertical; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .json-api-fields small, .json-api-note { font-size: 12px; }
 .json-api-fields .json-editor { grid-column: 1 / -1; }
+.json-api-fields .json-api-checkbox { display: flex; align-items: flex-start; gap: 9px; }
+.json-api-checkbox input { width: auto; margin-top: 3px; }
 .json-api-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 .json-api-note { margin: 16px 0 0; overflow-wrap: anywhere; }
 

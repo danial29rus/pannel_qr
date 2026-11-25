@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -42,17 +43,22 @@ class MulenPayAdapter:
     @staticmethod
     def _sbp_url(payload: dict) -> str | None:
         """Return the direct NSPK QR URL only when MulenPay explicitly provides it."""
-        candidate = payload.get("data", {}).get("qrpayload")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        candidate = data.get("qrpayload") if isinstance(data, dict) else None
         if isinstance(candidate, str) and candidate.startswith("https://qr.nspk.ru/"):
             return candidate
         return None
 
-    async def _get_sbp_url(self, hosted_payment_url: str) -> tuple[str | None, dict | None]:
+    @classmethod
+    async def get_sbp_url(cls, hosted_payment_url: str) -> tuple[str | None, dict | None]:
         """Obtain a direct SBP QR URL, retrying one failed preparation once."""
+        parsed = urlsplit(hosted_payment_url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            return None, {"error": "MulenPay checkout URL must use HTTPS and have a valid host"}
         sbp_endpoint = f"{hosted_payment_url.rstrip('/')}/sbp"
         failed_attempts: list[dict] = []
 
-        for attempt in range(1, self.SBP_QR_ATTEMPTS + 1):
+        for attempt in range(1, cls.SBP_QR_ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(timeout=15) as client:
                     response = await client.get(sbp_endpoint)
@@ -64,7 +70,7 @@ class MulenPayAdapter:
                     }
                 else:
                     payload = response.json()
-                    sbp_url = self._sbp_url(payload)
+                    sbp_url = cls._sbp_url(payload)
                     if sbp_url:
                         # Preserve any preceding failure in the operator
                         # trace, without causing another request after this
@@ -84,8 +90,8 @@ class MulenPayAdapter:
                 attempt_result = {"attempt": attempt, "error": str(exc)}
 
             failed_attempts.append(attempt_result)
-            if attempt < self.SBP_QR_ATTEMPTS:
-                await asyncio.sleep(self.SBP_QR_RETRY_DELAY_SECONDS)
+            if attempt < cls.SBP_QR_ATTEMPTS:
+                await asyncio.sleep(cls.SBP_QR_RETRY_DELAY_SECONDS)
 
         # Keep every failure in the payment trace.  The last status code is
         # duplicated at top level for the standard provider-attempt log.
@@ -120,7 +126,7 @@ class MulenPayAdapter:
         sbp_url = None
         sbp_payload = None
         if isinstance(hosted_payment_url, str) and hosted_payment_url.startswith("https://"):
-            sbp_url, sbp_payload = await self._get_sbp_url(hosted_payment_url)
+            sbp_url, sbp_payload = await self.get_sbp_url(hosted_payment_url)
         if not sbp_url:
             # A hosted widget is not a valid substitute for the direct QR
             # contract exposed by /transactions/qr.  Keep the provider

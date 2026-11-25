@@ -105,7 +105,7 @@ async def test_signed_payment_reserves_same_pool_email_before_remote_create(monk
     internal_payload = create_payment.await_args_list[0].args[1]
     assert internal_payload.user_id == buyer_id
     assert internal_payload.extra["_signed_external_api"] is True
-    assert "_require_direct_qr" not in internal_payload.extra
+    assert internal_payload.extra["_require_direct_qr"] is True
     assert create_payment.await_args_list[0].args[2] == f"external-api:{transaction_id}"
 
 

@@ -1,12 +1,13 @@
 import json
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from app.db.models import TransactionDirection, TransactionState
-from app.payments.adapters.base import CreatePaymentRequest
+from app.payments.adapters.base import CreatePaymentRequest, RetryableProviderError
 from app.payments.adapters.json_api import JsonApiAdapter
 
 
@@ -58,9 +59,60 @@ class FakeResponse:
 
 
 @pytest.mark.asyncio
-async def test_vitrina_create_maps_request_and_returns_hosted_checkout(monkeypatch):
+async def test_vitrina_create_extracts_direct_nspk_url_from_mulen_checkout(monkeypatch):
     reference = str(uuid4())
     request = payment_request(reference)
+    calls = []
+    config = vitrina_config()
+    config["extract_sbp_qr"] = True
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            if method == "GET":
+                return FakeResponse({"data": {"qrpayload": "https://qr.nspk.ru/ABCD1234"}})
+            return FakeResponse({
+                "transaction_id": reference,
+                "amount_rub": 500,
+                "status": "pending",
+                "payment_url": "https://checkout.mulenpay.example/pay/123",
+                "qr_url": "https://checkout.mulenpay.example/pay/123",
+            })
+
+        async def get(self, url):
+            return await self.request("GET", url)
+
+    monkeypatch.setattr("app.payments.adapters.json_api.httpx.AsyncClient", FakeClient)
+    adapter = JsonApiAdapter(config)
+    payment = await adapter.create_payment(request)
+
+    method, url, kwargs = calls[0]
+    assert method == "POST"
+    assert url == "https://vitrina-studio.ru/api/v1/external/payments"
+    assert kwargs["headers"]["Authorization"] == "Bearer test-vitrina-token"
+    body = json.loads(kwargs["content"])
+    assert body == {"transaction_id": reference, "email": "buyer@example.com", "amount_rub": 500}
+    assert payment.external_id == reference
+    assert payment.state == TransactionState.pending
+    assert calls[1][0:2] == ("GET", "https://checkout.mulenpay.example/pay/123/sbp")
+    assert payment.payload["payment_url"] == "https://qr.nspk.ru/ABCD1234"
+    assert payment.payload["qr_url"] == "https://qr.nspk.ru/ABCD1234"
+    assert payment.payload["hosted_payment_url"] == "https://checkout.mulenpay.example/pay/123"
+
+
+@pytest.mark.asyncio
+async def test_vitrina_create_fails_if_mulen_does_not_return_direct_nspk(monkeypatch):
+    config = vitrina_config()
+    config["extract_sbp_qr"] = True
     calls = []
 
     class FakeClient:
@@ -75,28 +127,25 @@ async def test_vitrina_create_maps_request_and_returns_hosted_checkout(monkeypat
 
         async def request(self, method, url, **kwargs):
             calls.append((method, url, kwargs))
+            if method == "GET":
+                return FakeResponse({"data": {"qrpayload": "https://checkout.mulenpay.example/not-nspk"}})
             return FakeResponse({
-                "transaction_id": reference,
+                "transaction_id": request.reference,
                 "amount_rub": 500,
                 "status": "pending",
                 "payment_url": "https://checkout.mulenpay.example/pay/123",
                 "qr_url": "https://checkout.mulenpay.example/pay/123",
             })
 
-    monkeypatch.setattr("app.payments.adapters.json_api.httpx.AsyncClient", FakeClient)
-    adapter = JsonApiAdapter(vitrina_config())
-    payment = await adapter.create_payment(request)
+        async def get(self, url):
+            return await self.request("GET", url)
 
-    method, url, kwargs = calls[0]
-    assert method == "POST"
-    assert url == "https://vitrina-studio.ru/api/v1/external/payments"
-    assert kwargs["headers"]["Authorization"] == "Bearer test-vitrina-token"
-    body = json.loads(kwargs["content"])
-    assert body == {"transaction_id": reference, "email": "buyer@example.com", "amount_rub": 500}
-    assert payment.external_id == reference
-    assert payment.state == TransactionState.pending
-    assert payment.payload["payment_url"].startswith("https://checkout.")
-    assert payment.payload["qr_url"] == payment.payload["payment_url"]
+    monkeypatch.setattr("app.payments.adapters.json_api.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.payments.adapters.mulenpay.asyncio.sleep", AsyncMock())
+    request = payment_request()
+    with pytest.raises(RetryableProviderError, match="direct https://qr.nspk.ru"):
+        await JsonApiAdapter(config).create_payment(request)
+    assert [call[0] for call in calls] == ["POST", "GET", "GET"]
 
 
 @pytest.mark.asyncio
@@ -133,14 +182,6 @@ def test_json_api_rejects_fractional_rubles_for_vitrina():
     adapter = JsonApiAdapter(vitrina_config())
     with pytest.raises(ValueError, match="whole-unit"):
         adapter.validate_payment_request(payment_request(amount=Decimal("500.50")))
-
-
-def test_json_api_rejects_legacy_direct_nspk_qr_mode():
-    adapter = JsonApiAdapter(vitrina_config())
-    request = payment_request()
-    request.extra["_require_direct_qr"] = True
-    with pytest.raises(ValueError, match="hosted checkout links"):
-        adapter.validate_payment_request(request)
 
 
 def test_json_api_rejects_non_https_provider_url():
