@@ -275,9 +275,12 @@ async def list_transactions(
     session: AsyncSession = Depends(get_session),
 ):
     if amount_from is not None and amount_to is not None and amount_from > amount_to:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="amount_from must not exceed amount_to")
-    if created_from is not None and created_to is not None and created_from > created_to:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="created_from must not be later than created_to")
+        raise HTTPException(status_code=422, detail="amount_from must not exceed amount_to")
+    for name, value in (("created_from", created_from), ("created_to", created_to)):
+        if value is not None and value.utcoffset() is None:
+            raise HTTPException(422, f"{name} must include a timezone")
+    if created_from is not None and created_to is not None and created_from >= created_to:
+        raise HTTPException(status_code=422, detail="created_from must not be later than created_to")
     return await PaymentService.list(
         session, project_id, page, page_size, transaction_id, amount_from, amount_to,
         created_from, created_to, state,

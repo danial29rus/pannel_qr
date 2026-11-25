@@ -23,8 +23,8 @@ def start_of_day(now: datetime) -> datetime:
 
 
 def start_of_week(now: datetime) -> datetime:
-    day = start_of_day(now)
-    return day - timedelta(days=day.weekday())
+    day = now.astimezone(MOSCOW).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (day - timedelta(days=day.weekday())).astimezone(UTC)
 
 
 def is_in_time_window(now: time, start: time | None, end: time | None) -> bool:

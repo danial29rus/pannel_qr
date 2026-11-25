@@ -39,6 +39,8 @@ def issue_admin_session() -> str:
 
 def session_role(token: str) -> ActorRole | None:
     settings = get_settings()
+    if not settings.panel_session_secret:
+        return None
     try:
         body, signature = token.split(".", 1)
         expected = _b64(hmac.new(settings.panel_session_secret.encode(), body.encode(), hashlib.sha256).digest())

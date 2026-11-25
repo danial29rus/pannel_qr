@@ -1,5 +1,6 @@
 """Dedicated production worker entrypoint; it does not serve HTTP."""
 import asyncio
+import logging
 
 from app.core.config import get_settings
 from app.db.session import engine
@@ -15,7 +16,7 @@ async def run() -> None:
             except Exception:
                 # Individual request/provider errors are written to the audit
                 # trail; keep the worker alive for the next pass.
-                pass
+                logging.getLogger(__name__).exception("Payment reconciliation failed")
             await asyncio.sleep(max(5, settings.reconciliation_poll_seconds))
     finally:
         await engine.dispose()

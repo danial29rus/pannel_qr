@@ -15,37 +15,13 @@ For a domain, use [the Nginx template](deploy/nginx/panel.conf.example), replace
 
 ## Production deployment
 
-Production uses the server's Nginx, PostgreSQL volumes, a separate worker, and Alembic migrations. Copy `.env.production.example` to `.env.production` on the server, generate long secrets, point both DNS A records to the server, then run:
+For a new independent reserve server, follow [the deployment guide in Russian](DEPLOYMENT_RU.md). It covers DNS, Docker, separate secrets/database, HTTPS, backup, verification, and deliberate activation of payment processing. The installer renders Nginx hosts from `.env.production`; it does not use the historical hardcoded domain configs.
 
-```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
-```
+On the new server, fill `.env.production` from `.env.production.example`, then run `sudo bash scripts/install-production.sh`. Keep `COMPOSE_PROFILES` empty for standby; use `processing` when the dedicated worker should process this installation's payments. Existing workers must be explicitly stopped before disabling that profile. The API remains available in standby.
 
-`panel.workkit-studio.ru` serves the dashboard; `api.workkit-studio.ru` exposes the API/webhook host. Install the two supplied Nginx site templates, then issue their certificates with Certbot. The migration container runs `alembic upgrade head` before API and worker start. Never use `down`, `rm -v`, or a new volume name on a production update: the `postgres_data` Docker volume contains the audit trail and payment data.
+Do not apply the reserve example env to the existing installation: changing `COMPOSE_PROJECT_NAME` selects a different PostgreSQL volume. Keep the existing server's settings, DNS and provider webhooks unchanged. A reserve deployment is independent; automatic failover and database replication are not configured.
 
-Generate a password hash locally without placing the plaintext password in the environment:
-
-```bash
-python -c 'import base64, hashlib, os, getpass; p=getpass.getpass().encode(); s=os.urandom(16); print("scrypt$"+base64.urlsafe_b64encode(s).rstrip(b"=").decode()+"$"+base64.urlsafe_b64encode(hashlib.scrypt(p,salt=s,n=2**14,r=8,p=1)).rstrip(b"=").decode())'
-```
-
-Put that value into `PANEL_ADMIN_PASSWORD_HASH`. The panel login issues a time-limited signed session; API automation may use the separate `ADMIN_TOKEN`, `OPERATOR_TOKEN`, or `VIEWER_TOKEN` headers.
-
-Generate production secrets with `sh scripts/generate-secrets.sh`; it prints values and never overwrites an existing env file.
-
-After filling the non-password production values, run `sudo bash scripts/install-production.sh`. It prompts twice for the panel password without putting it into shell history, rotates the signed-session secret, builds the stack, installs the two Nginx hosts, validates Nginx, and asks Certbot for both certificates. DNS must already point at the server.
-
-To rotate only the panel password later, use `sudo bash scripts/reset-panel-password.sh`; it recreates only the API container and never touches PostgreSQL.
-
-Schedule one daily database backup on the server (and copy this directory to off-server storage):
-
-```bash
-0 3 * * * cd /srv/pannel_qr && BACKUP_DIR=/var/backups/clearpay sh scripts/backup-postgres.sh >> /var/log/clearpay-backup.log 2>&1
-```
-
-Test a backup before relying on it: `pg_restore --list /var/backups/clearpay/panel-<timestamp>.dump`.
-
-`frontend/Dockerfile` is a production multi-stage React build served by Nginx; `frontend/Dockerfile.dev` is used by Compose for hot reload locally.
+See [HonestPlay connection instructions](INTEGRATION_HONESTPLAY_RU.md) for the partner adapter, durable UUID retries, polling, and hosted checkout limitations.
 
 ## What is already included
 

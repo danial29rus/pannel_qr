@@ -510,6 +510,12 @@ class SupportMessageRead(ORMModel):
     created_at: datetime
 
 
+class DashboardDay(BaseModel):
+    date: str
+    amount: Decimal
+    payment_count: int
+
+
 class DashboardSummary(BaseModel):
     from_date: datetime
     to_date: datetime
@@ -521,3 +527,4 @@ class DashboardSummary(BaseModel):
     pending_count: int
     failed_count: int
     terminal_count: int
+    daily: list[DashboardDay] = Field(default_factory=list)

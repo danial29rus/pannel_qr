@@ -3,6 +3,8 @@
 The loop is intentionally idempotent: an already terminal order is never
 re-opened, and external callbacks use a stable idempotency key.
 """
+import logging
+
 from datetime import UTC, datetime, timedelta
 
 from app.dao.repositories import OrderDAO, ProjectDAO, ProviderDAO, ProviderRequestAttemptDAO, TransactionDAO
@@ -31,12 +33,14 @@ async def reconcile_open_orders() -> None:
         except Exception:
             # Individual order failures are recorded as request attempts where a
             # transaction exists; one bad provider must not stop the worker.
+            logging.getLogger(__name__).exception("Reconciliation item failed")
             continue
     for transaction_id in direct_transaction_ids:
         try:
             await reconcile_direct_transaction(transaction_id)
         except Exception:
             # The next scheduled pass retries transient provider failures.
+            logging.getLogger(__name__).exception("Reconciliation item failed")
             continue
     for transaction_id in merchant_callback_transaction_ids:
         try:
@@ -45,6 +49,7 @@ async def reconcile_open_orders() -> None:
         except Exception:
             # A failed merchant endpoint is retried on the next pass and every
             # attempt remains in the transaction trace.
+            logging.getLogger(__name__).exception("Reconciliation item failed")
             continue
 
 

@@ -1,12 +1,15 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.api.router import router
 from app.core.config import get_settings
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
 from app.jobs.reconciliation import reconcile_open_orders
 
 settings = get_settings()
@@ -29,7 +32,7 @@ async def lifespan(_: FastAPI):
             except Exception:
                 # Per-order failures are audited; this protects the API process
                 # from a transient database/network problem in the worker loop.
-                pass
+                logging.getLogger(__name__).exception("Payment reconciliation failed")
             try:
                 await asyncio.wait_for(stop_reconciliation.wait(), timeout=max(5, settings.reconciliation_poll_seconds))
             except TimeoutError:
@@ -50,3 +53,14 @@ app.include_router(router, prefix=settings.api_prefix)
 @app.get("/health", tags=["system"])
 async def health_check():
     return {"status": "ok", "environment": settings.environment}
+
+
+@app.get("/ready", tags=["system"])
+async def readiness_check():
+    try:
+        async with SessionLocal() as session:
+            await asyncio.wait_for(session.execute(text("SELECT 1")), timeout=5)
+    except Exception:
+        logging.getLogger(__name__).exception("Database readiness check failed")
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return {"status": "ready"}

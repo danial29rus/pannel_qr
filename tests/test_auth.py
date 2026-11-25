@@ -24,3 +24,15 @@ def test_password_hash_verification():
 
     assert auth.verify_password("correct horse", value)
     assert not auth.verify_password("wrong password", value)
+
+
+def test_sessions_are_rejected_when_secret_is_unconfigured(monkeypatch):
+    settings = SimpleNamespace(panel_session_secret="", panel_session_ttl_minutes=15)
+    monkeypatch.setattr(auth, "get_settings", lambda: settings)
+    import hashlib
+    import hmac
+    import json
+    import time
+    body = auth._b64(json.dumps({"role":"admin", "exp":int(time.time())+1000}).encode())
+    signature = auth._b64(hmac.new(b"", body.encode(), hashlib.sha256).digest())
+    assert auth.session_role(f"{body}.{signature}") is None

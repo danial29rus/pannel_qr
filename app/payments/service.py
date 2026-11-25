@@ -17,7 +17,7 @@ from app.payments.adapters.base import RetryableProviderError
 from app.payments.adapters.base import CreatePaymentRequest, ProviderPayment
 from app.payments.registry import registry
 from app.services.policies import OperationalPolicyService
-from app.services.routing import RoutingService
+from app.services.routing import MOSCOW, RoutingService, start_of_day, start_of_week
 from app.services.external_platform import ExternalPlatformService
 
 LIMIT_COUNTED_STATES = (TransactionState.created, TransactionState.pending, TransactionState.processing, TransactionState.succeeded)
@@ -50,14 +50,12 @@ def is_sbp_qr_unavailable(provider_payment: ProviderPayment) -> bool:
 
 
 def period_start(period: LimitPeriod, now: datetime) -> datetime:
-    now = now.astimezone(UTC)
     if period == LimitPeriod.daily:
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start_of_day(now)
     if period == LimitPeriod.weekly:
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        return start - timedelta(days=start.weekday())
+        return start_of_week(now)
     if period == LimitPeriod.monthly:
-        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return now.astimezone(MOSCOW).replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     return datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -111,6 +109,9 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
 
     existing = await TransactionDAO.get_by_idempotency(session, payload.project_id, idempotency_key)
     if existing:
+        if (existing.amount != payload.amount or existing.currency.upper() != payload.currency.upper()
+                or existing.user_id != payload.user_id or existing.direction != payload.direction):
+            raise HTTPException(409, "Idempotency-Key is already used for a different payment")
         return existing
 
     payload.currency = payload.currency.upper()
@@ -144,9 +145,22 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This payment provider requires an email on the selected user",
         )
-    request = CreatePaymentRequest(reference=str(transaction.id), amount=payload.amount, currency=payload.currency,
+    reference = str(transaction.id)
+    try:
+        reference_factory = getattr(adapter, "payment_reference", None)
+        if reference_factory:
+            reference = reference_factory(idempotency_key, payload.extra)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    request = CreatePaymentRequest(reference=reference, amount=payload.amount, currency=payload.currency,
                                    direction=payload.direction, description=payload.description, extra=payload.extra,
                                    customer_email=customer_email)
+    try:
+        validator = getattr(adapter, "validate_payment_request", None)
+        if validator:
+            validator(request)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     max_attempts = max(1, min(int(provider.settings.get("max_attempts", 3)), 8))
     for attempt in range(1, max_attempts + 1):
         try:
@@ -232,6 +246,7 @@ class PaymentService:
             currency=payload.currency,
             description=payload.description or f"QR payment {payload.merchant_transaction_id}",
             extra={
+                "_require_direct_qr": True,
                 "merchant_transaction_id": payload.merchant_transaction_id,
                 "merchant_webhook_url": payload.webhook_url,
                 "website_url": payload.return_url,

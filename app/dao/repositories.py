@@ -282,7 +282,14 @@ class TransactionDAO:
         if transaction_id:
             # UUIDs are stored natively, so cast only for the partial-ID search
             # used by operators who usually paste a prefix from a provider log.
-            filters.append(cast(Transaction.id, String).ilike(f"%{transaction_id.strip()}%"))
+            term = "%" + transaction_id.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            filters.append(or_(
+                cast(Transaction.id, String).ilike(term, escape="\\"),
+                Transaction.external_id.ilike(term, escape="\\"),
+                Transaction.extra["merchant_transaction_id"].astext.ilike(term, escape="\\"),
+                select(Order.id).where(Order.transaction_id == Transaction.id,
+                    or_(Order.external_order_id.ilike(term, escape="\\"), Order.reference.ilike(term, escape="\\"))).correlate(Transaction).exists(),
+            ))
         if amount_from is not None:
             filters.append(Transaction.amount >= amount_from)
         if amount_to is not None:
@@ -290,7 +297,7 @@ class TransactionDAO:
         if created_from is not None:
             filters.append(Transaction.created_at >= created_from)
         if created_to is not None:
-            filters.append(Transaction.created_at <= created_to)
+            filters.append(Transaction.created_at < created_to)
         if state is not None:
             filters.append(Transaction.state == state)
 
@@ -440,6 +447,17 @@ class TransactionDAO:
         return Decimal(amount), int(count)
 
     @staticmethod
+    async def dashboard_daily(session: AsyncSession, project_id: uuid.UUID, currency: str, start: datetime, end: datetime):
+        day = func.date_trunc("day", func.timezone("Europe/Moscow", Transaction.created_at))
+        return (await session.execute(select(
+            day.label("day"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.state == TransactionState.succeeded), 0),
+            func.count(Transaction.id),
+        ).where(Transaction.project_id == project_id, Transaction.currency == currency,
+                Transaction.created_at >= start, Transaction.created_at < end)
+            .group_by(day).order_by(day))).all()
+
+    @staticmethod
     async def dashboard_totals(
         session: AsyncSession, project_id: uuid.UUID, currency: str, start: datetime, end: datetime,
     ) -> tuple[Decimal, Decimal, Decimal, int, int, int, int, int]:
@@ -456,7 +474,7 @@ class TransactionDAO:
             func.count(Transaction.id).filter(failed),
             func.count(Transaction.id).filter(succeeded | failed),
         ).where(Transaction.project_id == project_id, Transaction.currency == currency,
-                Transaction.created_at >= start, Transaction.created_at <= end)
+                Transaction.created_at >= start, Transaction.created_at < end)
         paid, credited, margin, count, success_count, pending_count, failed_count, terminal_count = (await session.execute(statement)).one()
         return Decimal(paid), Decimal(credited), Decimal(margin), count, success_count, pending_count, failed_count, terminal_count
 

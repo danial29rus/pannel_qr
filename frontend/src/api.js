@@ -2,7 +2,9 @@ const root = "/api/v1";
 export const PANEL_AUTH_EXPIRED = "panel-auth-expired";
 export const api = async (path, options = {}) => {
   const token = sessionStorage.getItem("panel-token");
-  const response = await fetch(`${root}${path}`, { ...options, headers: { "Content-Type": "application/json", ...(token ? { "X-Panel-Token": token } : {}), ...options.headers } });
+  const timeout = AbortSignal.timeout(30000);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  const response = await fetch(`${root}${path}`, { ...options, signal, headers: { "Content-Type": "application/json", ...(token ? { "X-Panel-Token": token } : {}), ...options.headers } });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     if (response.status === 401 && token && path !== "/auth/login") {
@@ -10,7 +12,8 @@ export const api = async (path, options = {}) => {
       window.dispatchEvent(new Event(PANEL_AUTH_EXPIRED));
       throw new Error("Сессия завершена. Войдите снова.");
     }
-    throw new Error(typeof data.detail === "string" ? data.detail : "Операция отклонена сервером");
+    const detail = Array.isArray(data.detail) ? data.detail.map(item => `${item.loc?.slice(1).join(".") || "Поле"}: ${item.msg}`).join("; ") : data.detail;
+    throw new Error(typeof detail === "string" ? detail : `Операция отклонена сервером (${response.status})`);
   }
   return response.status === 204 ? null : response.json();
 };
