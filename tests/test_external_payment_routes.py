@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -14,6 +16,8 @@ from app.api.schemas import ExternalPaymentCreate
 from app.db.models import TransactionState
 import app.api.router as router_module
 import app.services.external_platform as external_platform
+from app.db.session import get_session
+from app.main import app
 
 
 def request_for(method, path, body=b"", headers=None):
@@ -27,6 +31,32 @@ def request_for(method, path, body=b"", headers=None):
         "server": ("panel.example", 443), "client": ("127.0.0.1", 12345),
     }
     return Request(scope, receive)
+
+
+@pytest.mark.asyncio
+async def test_legacy_qr_422_explains_missing_fields_without_echoing_body(caplog):
+    caplog.set_level(logging.WARNING, logger="app.main")
+    async def override_session():
+        yield object()
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://panel.test") as client:
+            response = await client.post(
+                "/api/v1/transactions/qr",
+                headers={"Authorization": "Bearer test-token"},
+                json={"amount": "100", "currency": "RUB", "email": "private@example.com"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["error"]["code"] == "request_validation_error"
+    fields = {detail["field"] for detail in payload["error"]["details"]}
+    assert "body.merchant_transaction_id" in fields
+    assert "body.merchant_transaction_id (missing): Field required" in caplog.text
+    assert "private@example.com" not in response.text
+    assert "private@example.com" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -208,6 +208,37 @@ Callback подписан заголовками `X-Panel-Timestamp` и `X-Panel
 
 Partner endpoint панели не отдаёт исходное hosted значение. При включённой настройке `/sbp` adapter запрашивает `GET <hosted_payment_url>/sbp`, извлекает `data.qrpayload` и возвращает партнёру только ссылку с точным префиксом `https://qr.nspk.ru/`. Если endpoint не вернул такой NSPK URL после повторных попыток, create возвращает сохранённую операцию со `status=failed` и пустыми URL; hosted checkout не подменяет QR.
 
+## PWallet Standard: legacy QR endpoint
+
+Если клиент PWallet сам дописывает `/api/v1/transactions/qr` к указанному API URL, в его поле **API URL** укажите только origin:
+
+```text
+https://panel.vitrina-studio.ru
+```
+
+Не указывайте там `/api/v1/external/vitrina-studio/payments`: клиент добавит свой суффикс и получится неправильный склеенный URL. Legacy `/api/v1/transactions/qr` принимает `Authorization: Bearer <external_incoming_token>` и JSON:
+
+```json
+{
+  "amount": "3162",
+  "currency": "RUB",
+  "merchant_transaction_id": "592c0cc8-15b0-46ba-bf45-3a268c94ce32",
+  "webhook_url": "https://api.pwallet.online/api/v1/payment-providers/webhook/<id>"
+}
+```
+
+Также принимаются `currency_rate`, `auto_amount_step`, `auto_amount_limit`, `hold_time_seconds`, `return_url` и `description`. Email в запросе не нужен. `ttl_seconds`, `rate`, payer fields и `client_id` этим endpoint не используются. На этой legacy авторизации панель проверяет Bearer token; переданный `X-Signature` не валидируется, а callback отправляется без HMAC-подписи. Не считайте поле Secret key в настройках этого старого контура проверенным на `/transactions/qr`.
+
+В access log `422` означает, что JSON не соответствует этим полям. Новый validation response и `docker logs` показывают путь поля, type и причину, но не выводят полученные значения. Например:
+
+```text
+Request validation rejected method=POST path=/api/v1/transactions/qr errors=body.merchant_transaction_id (missing): Field required
+```
+
+Response содержит такой же список `field/message/type`. `404 GET /api/v2/balance` означает, что PWallet запрашивает дополнительный balance API, которого в панели нет. Если Standard-клиент требует этот endpoint и не позволяет отключить balance check, ему понадобится другой compatible integration contract; не подменяйте balance фиктивным значением.
+
+Новый signed endpoint `/api/v1/external/{project_key}/payments` — другой контракт: `transaction_id`, `amount_rub`, Auth token и HMAC headers. Используйте его только если партнерский клиент умеет настраивать именно этот path, body и подпись.
+
 ## 6. Тестовый запрос и реальная проверка оплаты
 
 В репозитории есть `scripts/test_partner_payment.py`. Он **симулирует клиент партнёра**: генерирует UUID, подписывает create/status запросы двумя partner keys, выводит payment/QR URL, при `--open` открывает direct NSPK URL и опрашивает status endpoint. Он не имитирует Витрину или банк: QR-ссылка создаётся реальной настроенной Витриной/MulenPay, а оплата по ней будет реальной.
