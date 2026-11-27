@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -26,6 +27,7 @@ from app.dao.repositories import TransactionDAO
 from app.api.auth import login
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -189,6 +191,10 @@ async def accept_external_order(project_key: str, payload: ExternalOrderCreate, 
         )
         return response
     except HTTPException as exc:
+        logger.warning(
+            "External order rejected project=%s external_order_id=%s http_status=%s reason=%s",
+            project_key, payload.external_order_id, exc.status_code, str(exc.detail)[:500],
+        )
         await ExternalPlatformService.log_request(
             session, project.id, payload.external_order_id, request_payload, outcome="rejected", http_status=exc.status_code,
             response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
@@ -265,6 +271,10 @@ async def accept_external_payment(
         )
         return response
     except HTTPException as exc:
+        logger.warning(
+            "External payment rejected project=%s transaction_id=%s http_status=%s reason=%s",
+            project_id, payload.transaction_id, exc.status_code, str(exc.detail)[:500],
+        )
         await ExternalPlatformService.log_request(
             session, project_id, str(payload.transaction_id), request_payload, outcome="rejected", http_status=exc.status_code,
             response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),
@@ -335,6 +345,10 @@ async def create_merchant_qr_payment(payload: MerchantQrPaymentCreate, request: 
         )
         return response
     except HTTPException as exc:
+        logger.warning(
+            "Merchant QR request rejected project=%s merchant_transaction_id=%s http_status=%s reason=%s",
+            project_id, payload.merchant_transaction_id, exc.status_code, str(exc.detail)[:500],
+        )
         await ExternalPlatformService.log_request(
             session, project_id, payload.merchant_transaction_id, request_payload, outcome="rejected", http_status=exc.status_code,
             response_payload={"detail": exc.detail} if isinstance(exc.detail, (str, dict)) else None, error=str(exc.detail),

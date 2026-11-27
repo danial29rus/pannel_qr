@@ -19,7 +19,7 @@
 - Добавлен partner endpoint с двумя секретами: Auth token и HMAC Secret key. Принимает UUID/сумму, выбирает email из пула, создаёт платёж через выбранный provider route, возвращает direct NSPK link и статус; incoming create/status запросы подписаны и ограничены 5-минутным timestamp window.
 - Email reservation сохраняется до сетевого вызова. Повтор после timeout не выбирает новый email, а Витрина получает тот же UUID для идемпотентного создания. Новый UUID может выбрать тот же email, эксклюзивная блокировка email между разными незавершёнными заказами не реализована.
 - Callback нового API подписывается `X-Panel-Timestamp`/`X-Panel-Signature`; polling доступен по отдельному status URL. Reconciliation queue выбирает terminal транзакции `external-api:*`, чтобы отправить callback после смены статуса.
-- 422 validation responses и backend warnings показывают field/type/message, но не echo исходных значений, email или secrets.
+- 422 validation responses показывают field/type/message; FastAPI validation, business-level HTTPException и auth/signature rejections логируются с причиной, не записывая исходные значения, email, bearer token или подпись.
 - Добавлен `scripts/test_partner_payment.py`: скрыто запрашивает два partner keys, отправляет подписанный create, показывает payment/QR URLs, открывает checkout по флагу `--open` и опрашивает статус. Платёж через production provider является реальным.
 - Добавлен `scripts/diagnose_vitrina_payment.py`: по существующему UUID проверяет Vitrina status и MulenPay `/sbp`, не создавая новый платёж; секреты скрыто запрашиваются и не печатаются.
 - Повтор внутреннего создания с тем же Idempotency-Key и другой суммой/валютой/пользователем/направлением возвращает 409.

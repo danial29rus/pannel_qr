@@ -6,6 +6,7 @@ success/failure callbacks are signed and each delivery is auditable/retryable.
 import hashlib
 import hmac
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -32,6 +33,7 @@ PAYGATE_TERMINAL_STATUSES = {
 # Prevent a broken merchant endpoint from being hit indefinitely. Every
 # delivery is still recorded, including the final capped attempt.
 MAX_MERCHANT_CALLBACK_ATTEMPTS = 5
+logger = logging.getLogger(__name__)
 
 
 def sign_external_platform_request(secret: str, timestamp: str, method: str, path: str, body: bytes) -> str:
@@ -48,20 +50,26 @@ class ExternalPlatformService:
     ) -> Project:
         project = await ProjectDAO.get_by_external_key(session, external_key)
         if not project or not project.is_active:
+            logger.warning("Signed partner request rejected: unknown or inactive project=%s", external_key)
             raise HTTPException(status_code=404, detail="Active project not found")
         if not project.external_incoming_token or not token or not hmac.compare_digest(project.external_incoming_token, token):
+            logger.warning("Signed partner request rejected: invalid Auth token project=%s", external_key)
             raise HTTPException(status_code=401, detail="Invalid external platform credentials")
         secret = project.external_callback_secret
         if not secret or not timestamp or not signature:
+            logger.warning("Signed partner request rejected: missing signature headers project=%s", external_key)
             raise HTTPException(status_code=401, detail="Invalid external platform credentials")
         try:
             issued_at = int(timestamp)
         except ValueError as exc:
+            logger.warning("Signed partner request rejected: invalid timestamp project=%s", external_key)
             raise HTTPException(status_code=401, detail="Invalid external platform credentials") from exc
         if abs(int(datetime.now(UTC).timestamp()) - issued_at) > 300:
+            logger.warning("Signed partner request rejected: expired signature project=%s", external_key)
             raise HTTPException(status_code=401, detail="Expired external platform signature")
         expected = sign_external_platform_request(secret, timestamp, method, path, body)
         if not hmac.compare_digest(expected, signature.lower()):
+            logger.warning("Signed partner request rejected: bad HMAC project=%s method=%s path=%s", external_key, method, path)
             raise HTTPException(status_code=401, detail="Invalid external platform signature")
         return project
 
@@ -80,6 +88,7 @@ class ExternalPlatformService:
     async def project_for_token(session: AsyncSession, supplied_token: str | None) -> Project:
         """Resolve a merchant project for the PayGateCore-compatible endpoint."""
         if not supplied_token:
+            logger.warning("Merchant QR request rejected: missing Bearer token")
             raise HTTPException(status_code=401, detail="Invalid external platform token")
         project = await ProjectDAO.get_by_external_incoming_token(session, supplied_token)
         if (
@@ -88,6 +97,7 @@ class ExternalPlatformService:
             or not project.external_incoming_token
             or not hmac.compare_digest(project.external_incoming_token, supplied_token)
         ):
+            logger.warning("Merchant QR request rejected: invalid token or inactive project")
             raise HTTPException(status_code=401, detail="Invalid external platform token")
         return project
 

@@ -11,8 +11,8 @@ import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.api.router import accept_external_payment, get_external_payment_status
-from app.api.schemas import ExternalPaymentCreate
+from app.api.router import accept_external_payment, create_merchant_qr_payment, get_external_payment_status
+from app.api.schemas import ExternalPaymentCreate, MerchantQrPaymentCreate
 from app.db.models import TransactionState
 import app.api.router as router_module
 import app.services.external_platform as external_platform
@@ -57,6 +57,47 @@ async def test_legacy_qr_422_explains_missing_fields_without_echoing_body(caplog
     assert "body.merchant_transaction_id (missing): Field required" in caplog.text
     assert "private@example.com" not in response.text
     assert "private@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_qr_business_422_is_written_to_api_logs(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger="app.api.router")
+    project = SimpleNamespace(
+        id=uuid4(), payment_expiry_minutes=30, default_platform_fee_percent=Decimal("14"),
+        external_key="vitrina-studio",
+    )
+
+    class TransactionScope:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Session:
+        def begin(self):
+            return TransactionScope()
+
+    monkeypatch.setattr(external_platform.ExternalPlatformService, "project_for_token", AsyncMock(return_value=project))
+    monkeypatch.setattr(external_platform.ExternalPlatformService, "log_request", AsyncMock())
+    monkeypatch.setattr(
+        router_module.PaymentService, "create_merchant_qr_payment",
+        AsyncMock(side_effect=HTTPException(status_code=422, detail={"code": "no_eligible_route"})),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await create_merchant_qr_payment(
+            MerchantQrPaymentCreate(
+                amount=Decimal("3162"), currency="RUB", merchant_transaction_id=str(uuid4()),
+            ),
+            request_for("POST", "/api/v1/transactions/qr", headers={"Authorization": "Bearer test-auth-token"}),
+            Session(),
+        )
+
+    assert error.value.status_code == 422
+    assert "Merchant QR request rejected" in caplog.text
+    assert "no_eligible_route" in caplog.text
+    assert "test-auth-token" not in caplog.text
 
 
 @pytest.mark.asyncio
