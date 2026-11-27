@@ -77,7 +77,7 @@ docker compose up -d --force-recreate api worker
 
 Нажмите **«Создать и подключить к проекту»**. Подключение сразу привязывается как маршрут выбранного проекта. Убедитесь, что маршрут активен и на нём выставлены нужные лимиты. Token Витрины хранится в панели как credential провайдера; его не передавайте партнёру.
 
-Universal JSON API поддерживает типовую пару `POST create` + `GET status`, Bearer или настраиваемые header auth, request JSON template, JSON paths ответа и mapping удалённых статусов. Опция `/sbp` вызывает `GET <hosted_payment_url>/sbp` и принимает только `data.qrpayload`, начинающийся с `https://qr.nspk.ru/`. Если прямую NSPK-ссылку получить не удалось, create завершается ошибкой; hosted checkout URL партнёру как QR не возвращается. Для другой системы создайте новое подключение и задайте её поля/mapping; нестандартное извлечение QR требует отдельной конфигурации или расширения клиента.
+Universal JSON API поддерживает типовую пару `POST create` + `GET status`, Bearer или настраиваемые header auth, request JSON template, JSON paths ответа и mapping удалённых статусов. Опция `/sbp` вызывает `GET <hosted_payment_url>/sbp` и принимает только `data.qrpayload`, начинающийся с `https://qr.nspk.ru/`. Если прямая NSPK-ссылка не получена после retries, панель сохраняет локальную транзакцию со статусом `failed`, запись попыток и событие ошибки, включает cooldown маршрута и отправляет партнёру failure callback. Hosted checkout URL как QR не возвращается.
 
 ## 3. Загрузить email
 
@@ -206,7 +206,7 @@ Status GET подписывается той же схемой, `METHOD=GET`, `P
 
 Callback подписан заголовками `X-Panel-Timestamp` и `X-Panel-Signature`. Подпись: `lowercase_hex(HMAC-SHA256(secret_key, UTF8(timestamp + ".") + raw_body))`. Партнёр должен проверить подпись и timestamp до обработки. Callback может прийти повторно; обработка должна быть идемпотентной по `transaction_id`. При временной ошибке панель повторяет доставку; GET status остаётся способом сверки.
 
-Корректировка для partner endpoint панели: он не отдаёт это исходное hosted значение. При включённой настройке `/sbp` adapter запрашивает `GET <hosted_payment_url>/sbp`, извлекает `data.qrpayload` и возвращает партнёру только ссылку с точным префиксом `https://qr.nspk.ru/`. Если endpoint не вернул такой NSPK URL после повторных попыток, create завершается `503`; hosted checkout не подменяет QR.
+Partner endpoint панели не отдаёт исходное hosted значение. При включённой настройке `/sbp` adapter запрашивает `GET <hosted_payment_url>/sbp`, извлекает `data.qrpayload` и возвращает партнёру только ссылку с точным префиксом `https://qr.nspk.ru/`. Если endpoint не вернул такой NSPK URL после повторных попыток, create возвращает сохранённую операцию со `status=failed` и пустыми URL; hosted checkout не подменяет QR.
 
 ## 6. Тестовый запрос и реальная проверка оплаты
 
@@ -237,11 +237,11 @@ python3 scripts/test_partner_payment.py \
 6. Скрипт продолжит опрашивать панель и должен показать `Status: paid (paid=True)`. Проверьте, что ваш callback endpoint получил подписанное уведомление, а партнёр пометил заказ успешным только после проверки подписи, `status=paid` и `paid=true`. Сверьте операцию в панели и в журнале Витрины; выбранный email партнёру не возвращается.
 7. Для проверки повтора запустите скрипт с тем же `--transaction-id <UUID>` и той же суммой: должен вернуться тот же платёж/email. С другой суммой ожидается `409`.
 
-Если create завершился сетевым timeout, **не генерируйте новый UUID**: запустите скрипт повторно с напечатанным UUID через `--transaction-id <UUID>`. Так проверяется idempotency на стороне партнёра → панели → Витрины. Если NSPK URL получить не удалось, запрос завершится ошибкой, а hosted URL не будет возвращён. Чтобы проверить оплату без списания, нужен sandbox/test provider аккаунт Витрины.
+Если create завершился сетевым timeout, **не генерируйте новый UUID**: запустите скрипт повторно с напечатанным UUID через `--transaction-id <UUID>`. Так проверяется idempotency на стороне партнёра → панели → Витрины. Если NSPK URL не получен после provider retries, панель сохранит транзакцию со статусом `failed`, вернёт `status=failed`, `paid=false` без payment URLs, включит route cooldown и отправит failure callback. Повтор с тем же UUID вернёт ту же failed операцию без нового вызова Витрины; для новой попытки после устранения причины нужен новый UUID. Чтобы проверить оплату без списания, нужен sandbox/test provider аккаунт Витрины.
 
 ### Диагностика ошибки 503 при извлечении QR
 
-Если панель ответила `503 Payment provider unavailable after retries`, но в логах есть `POST /api/v1/external/payments` Витрины с HTTP 200, создание в Витрине, вероятно, прошло, а direct QR не был получен на шаге MulenPay `/sbp`. Повторные POST с тем же UUID — повторы одного идемпотентного заказа; проверьте эту транзакцию в Витрине и не создавайте новый UUID вслепую.
+Если ранее панель ответила `503 Payment provider unavailable after retries`, но в логах есть `POST /api/v1/external/payments` Витрины с HTTP 200, создание в Витрине прошло, а direct QR не был получен на шаге MulenPay `/sbp`. После обновления панель сохраняет эту операцию как `failed`, а не откатывает запись. Повторные POST с тем же UUID — повторы одного идемпотентного заказа; не создавайте новый UUID вслепую.
 
 Проверьте существующий Vitrina payment по UUID диагностическим скриптом. Он не создаёт и не оплачивает новый платёж; запросит Vitrina Bearer token, покажет статус и hostname checkout URL, затем проверит `<checkout_url>/sbp` без авторизации:
 
@@ -251,6 +251,6 @@ python3 scripts/diagnose_vitrina_payment.py c1810819-1705-413b-b0da-ac67a04d55c8
 
 Ожидаемый результат `/sbp`: HTTP 200 и `data.qrpayload` с адресом `https://qr.nspk.ru/...`. Если endpoint вернёт другой статус/JSON или не вернёт `qrpayload`, проблема на стороне MulenPay checkout/метода `/sbp`; панель не выдаст hosted checkout как NSPK. Не публикуйте Vitrina Bearer token или полный checkout URL: в них могут быть секретные данные.
 
-Если этот диагностический скрипт получил прямой NSPK URL, а panel API всё равно отвечает 503, проверьте provider connection в панели: флаг **«Получать прямой NSPK URL ... `/sbp`»** должен быть включён. У ранее созданного JSON API connection этого параметра может не быть (по умолчанию он выключен). Создайте новый connection через preset **«Заполнить Витрину»**, включите флаг, привяжите его к проекту, выключите старый provider route и повторите partner smoke с тем же UUID. Vitrina token оставьте тем же.
+Если диагностический скрипт получил прямой NSPK URL, а partner payment сохранён со статусом `failed`, проверьте provider connection: флаг **«Получать прямой NSPK URL ... `/sbp`»** должен быть включён. У старого JSON API connection параметр может отсутствовать. Создайте новый connection через preset **«Заполнить Витрину»**, включите флаг, привяжите его к проекту и выключите старый маршрут. Тот же UUID останется идемпотентным и вернёт прежний `failed`; для новой попытки после cooldown партнёр должен создать новый UUID. Vitrina token оставьте тем же.
 
 После успешной оплаты polling зависит от двух worker-ов (Витрины и панели), поэтому callback может прийти с задержкой в несколько интервалов проверки. Проверьте worker logs и журнал callback попыток, если статус не изменился. Не передавайте партнёру provider token Витрины, admin token панели или email-пул.

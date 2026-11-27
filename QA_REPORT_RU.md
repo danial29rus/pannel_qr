@@ -15,7 +15,7 @@
 - Добавлены `/ready`, журналирование ошибок сверки, приватные атомарные дампы, исключение env/секретов из Docker-контекста, lock-зависимости и `npm ci`. Vite обновлён до исправленной версии; npm audit не обнаружил уязвимостей на момент проверки.
 - Установщик использует заданные домены и порты, поддерживает один домен для UI/API, не перезаписывает существующие Nginx-host и повторно читает новые секреты перед Compose. Резервная база изолируется именем проекта, worker включается отдельно.
 - Добавлен универсальный JSON API provider: настраиваемые create/status paths, JSON request template, response paths, status mapping, Bearer/header auth и опциональная HMAC-подпись. Preset заполняет API-контракт Витрины.
-- Vitrina preset вызывает hosted checkout MulenPay `/sbp`, читает `data.qrpayload` и отдаёт партнёру только прямой `https://qr.nspk.ru/` URL. Если NSPK URL не получен, API возвращает ошибку вместо hosted URL.
+- Vitrina preset вызывает hosted checkout MulenPay `/sbp`, читает `data.qrpayload` и отдаёт партнёру только прямой `https://qr.nspk.ru/` URL. Если NSPK URL не получен после retries, локальная транзакция сохраняется как failed, provider attempts/event сохраняются, маршрут получает cooldown, а партнёру отправляется failure callback; hosted URL не уходит как QR.
 - Добавлен partner endpoint с двумя секретами: Auth token и HMAC Secret key. Принимает UUID/сумму, выбирает email из пула, создаёт платёж через выбранный provider route, возвращает direct NSPK link и статус; incoming create/status запросы подписаны и ограничены 5-минутным timestamp window.
 - Email reservation сохраняется до сетевого вызова. Повтор после timeout не выбирает новый email, а Витрина получает тот же UUID для идемпотентного создания. Новый UUID может выбрать тот же email, эксклюзивная блокировка email между разными незавершёнными заказами не реализована.
 - Callback нового API подписывается `X-Panel-Timestamp`/`X-Panel-Signature`; polling доступен по отдельному status URL. Reconciliation queue выбирает terminal транзакции `external-api:*`, чтобы отправить callback после смены статуса.
@@ -25,7 +25,7 @@
 
 ## Выполненные проверки
 
-- **95 backend-тестов прошли, 3 opt-in PostgreSQL-теста пропущены** в основном прогоне. Отдельно на временной PostgreSQL 16 применены все миграции до `0011_external_payment_request`; все три opt-in tests прошли.
+- **97 backend-тестов прошли, 3 opt-in PostgreSQL-теста пропущены** в основном прогоне. Отдельно на временной PostgreSQL 16 применены все миграции до `0011_external_payment_request`; все три opt-in tests прошли.
 - Unit/API тесты покрывают HMAC, create/status, email reservation, повтор UUID, прямой NSPK extraction через MulenPay `/sbp`, отказ при отсутствии NSPK URL, статусы и валидацию JSON adapter. HTTP провайдеров подменяется.
 - **4 теста JS** проверяют московский понедельник при воскресенье UTC, воскресенье, переход года и високосный месяц.
 - Production-сборка React и production Compose configuration завершились успешно.

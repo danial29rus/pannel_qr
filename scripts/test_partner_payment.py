@@ -111,6 +111,9 @@ def main() -> int:
         return 1
     checkout_url = payment_url or qr_url
     if not checkout_url:
+        if payment.get("status") in FINAL_STATES and not payment.get("paid"):
+            print("Payment was recorded as failed/canceled; inspect the panel trace and wait for its signed failure callback", file=sys.stderr)
+            return 2
         print("No checkout link was returned", file=sys.stderr)
         return 1
     if args.open_link:

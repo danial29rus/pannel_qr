@@ -105,6 +105,41 @@ async def test_external_payment_rejects_hosted_url_when_direct_nspk_is_required(
 
 
 @pytest.mark.asyncio
+async def test_external_payment_returns_recorded_failed_status_after_provider_exhaustion(monkeypatch):
+    external_key = "vitrina-studio"
+    transaction_id = uuid4()
+    path = f"/api/v1/external/{external_key}/payments"
+    body = json.dumps({"transaction_id": str(transaction_id), "amount_rub": 500}, separators=(",", ":")).encode()
+    timestamp = str(int(datetime.now(UTC).timestamp()))
+    project = SimpleNamespace(id=uuid4(), external_callback_url="https://partner.example/callback", payment_expiry_minutes=30)
+    transaction = SimpleNamespace(
+        state=TransactionState.failed, raw_provider_payload={"error": {"code": "provider_create_failed"}},
+        payment_url=None, amount=Decimal("500"), currency="RUB", created_at=datetime.now(UTC),
+    )
+    authenticate = AsyncMock(return_value=project)
+    create = AsyncMock(return_value=transaction)
+    log = AsyncMock()
+    monkeypatch.setattr(external_platform.ExternalPlatformService, "project_for_signed_payment_request", authenticate)
+    monkeypatch.setattr(external_platform.ExternalPlatformService, "log_request", log)
+    monkeypatch.setattr(router_module.PaymentService, "create_external_platform_payment", create)
+    request = request_for("POST", path, body, {
+        "X-Platform-Token": "partner-auth-token",
+        "X-Platform-Timestamp": timestamp,
+        "X-Platform-Signature": "signature",
+    })
+
+    response = await accept_external_payment(
+        external_key, ExternalPaymentCreate(transaction_id=transaction_id, amount_rub=500), request,
+        AsyncMock(rollback=AsyncMock()),
+    )
+
+    assert response.transaction_id == transaction_id
+    assert response.status == "failed" and response.paid is False
+    assert response.payment_url is None and response.qr_url is None
+    assert log.await_args.kwargs["outcome"] == "accepted"
+
+
+@pytest.mark.asyncio
 async def test_external_payment_status_requires_signed_path_and_returns_saved_state(monkeypatch):
     external_key = "vitrina-studio"
     transaction_id = uuid4()

@@ -104,6 +104,25 @@ async def append_event(
     ))
 
 
+async def _persist_external_create_failure(
+    session: AsyncSession, transaction: Transaction, reference: str, error: str, http_status: int | None = None,
+) -> Transaction:
+    """Keep failed partner attempts visible and cool down the selected route."""
+    transaction.external_id = reference
+    transaction.payment_url = None
+    transaction.raw_provider_payload = {
+        "error": {"code": "provider_create_failed", "message": error, "http_status": http_status},
+    }
+    await append_event(
+        session, transaction, "provider.create_failed", TransactionState.failed,
+        actor="provider", payload={"message": error, "http_status": http_status},
+    )
+    await RoutingService.schedule_post_terminal_cooldown(
+        session, transaction.project_id, transaction.provider_id, datetime.now(UTC),
+    )
+    return transaction
+
+
 async def create_transaction(session: AsyncSession, payload: TransactionCreate, idempotency_key: str) -> Transaction:
     # Project row lock makes calculate-and-reserve limits safe under concurrent requests.
     project = await ProjectDAO.get_for_update(session, payload.project_id)
@@ -191,6 +210,10 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
             await ProviderRequestAttemptDAO.append(session, ProviderRequestAttempt(transaction_id=transaction.id, operation="create_payment", attempt=attempt, outcome="retryable_error", request_payload={"reference": request.reference}, response_payload=None, http_status=exc.status_code, error=str(exc)))
             if attempt == max_attempts:
                 logger.warning("Payment provider create failed after retries for %s: %s", idempotency_key, exc)
+                if payload.extra.get("_signed_external_api"):
+                    return await _persist_external_create_failure(
+                        session, transaction, request.reference, str(exc), exc.status_code,
+                    )
                 raise HTTPException(status_code=503, detail="Payment provider unavailable after retries") from exc
             await asyncio.sleep(min(2 ** (attempt - 1), 4))
         except httpx.HTTPStatusError as exc:
@@ -202,6 +225,10 @@ async def create_transaction(session: AsyncSession, payload: TransactionCreate, 
                 request_payload={"reference": request.reference}, response_payload={"body": exc.response.text[:1000]},
                 http_status=exc.response.status_code, error=f"HTTP {exc.response.status_code}",
             ))
+            if payload.extra.get("_signed_external_api"):
+                return await _persist_external_create_failure(
+                    session, transaction, request.reference, f"HTTP {exc.response.status_code}", exc.response.status_code,
+                )
             raise HTTPException(status_code=502, detail="Payment provider rejected the create request") from exc
     transaction.external_id = provider_payment.external_id
     transaction.payment_url = (provider_payment.payload or {}).get("payment_url")
